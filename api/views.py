@@ -33,6 +33,7 @@ class AdminUploadView(APIView):
                 uploaded_file=validated_data.get('uploaded_file'),
                 tags_from_user=validated_data.get('tags_from_user', ""),
                 class_level=validated_data.get('class_level', ""),
+                year=validated_data.get('year'),
                 status='PENDING' # Status is PENDING (tag extraction)
             )
         except Exception as e:

@@ -13,10 +13,14 @@ class SearchUploadSerializer(serializers.ModelSerializer):
     class_level = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
+    year = serializers.IntegerField(
+        required=False, 
+        allow_null=True
+    )
 
     class Meta:
         model = SearchRequest
-        fields = ['uploaded_file', 'tags_from_user', 'class_level']
+        fields = ['uploaded_file', 'tags_from_user', 'class_level','year']
 
 
 class VideoResultSerializer(serializers.ModelSerializer):

@@ -1,6 +1,6 @@
 
 from django.db import models
-from django.utils import timezone # We will need this
+from django.utils import timezone 
 
 class SearchRequest(models.Model):
     """
@@ -13,6 +13,7 @@ class SearchRequest(models.Model):
     uploaded_file = models.FileField(upload_to='uploads/', null=True, blank=True)
     tags_from_user = models.TextField(null=True, blank=True, help_text="Comma-separated tags from user")
     class_level = models.CharField(max_length=100, null=True, blank=True, help_text="e.g., LKG, UKG, Class 1")
+    year = models.IntegerField(null=True, blank=True, help_text="e.g., 2025")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     created_at = models.DateTimeField(auto_now_add=True)
 

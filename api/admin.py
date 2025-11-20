@@ -1,10 +1,9 @@
-# api/admin.py
 from django.contrib import admin
 from .models import SearchRequest, KeywordTag, VideoResult
 import re
 
 # -----------------------------------------------------------------
-# This is the new custom filter
+# This is the Class filter (no change)
 # -----------------------------------------------------------------
 class ClassLevelFilter(admin.SimpleListFilter):
     title = 'Class Level' # Title of the filter
@@ -33,6 +32,36 @@ class ClassLevelFilter(admin.SimpleListFilter):
         return queryset
 
 # -----------------------------------------------------------------
+# --- ADD THIS NEW YEAR FILTER ---
+# -----------------------------------------------------------------
+class YearFilter(admin.SimpleListFilter):
+    title = 'Year' # Title of the filter
+    parameter_name = 'year' # The URL parameter
+
+    def lookups(self, request, model_admin):
+        """
+        Finds all unique years from the SearchRequests
+        and creates the filter options.
+        """
+        # Get all non-empty, unique years
+        years = SearchRequest.objects.exclude(year__isnull=True)
+        # Order by year descending (e.g., 2025, 2024, 2023)
+        years = years.values_list('year', flat=True).distinct().order_by('-year')
+        
+        # Return a list of tuples (value, display_name)
+        return [(year, year) for year in years]
+
+    def queryset(self, request, queryset):
+        """
+        Filters the list based on the user's click.
+        """
+        if self.value():
+            # If user clicked "2025", find all tags linked
+            # to a SearchRequest with year=2025
+            return queryset.filter(search_requests__year=self.value())
+        return queryset
+
+# -----------------------------------------------------------------
 # This is the inline view (no change)
 # -----------------------------------------------------------------
 class VideoResultInline(admin.TabularInline):
@@ -54,16 +83,18 @@ class KeywordTagAdmin(admin.ModelAdmin):
     
     list_display = ['tag_text', 'status', 'last_searched_at']
     
-    # We add the new custom filter
-    list_filter = [ClassLevelFilter, 'status'] # <-- THIS IS THE FIX
+    # --- ADD THE YearFilter TO THE LIST ---
+    list_filter = [ClassLevelFilter, YearFilter, 'status'] 
     
     search_fields = ['tag_text']
     inlines = [VideoResultInline]
 
 # -----------------------------------------------------------------
-# This is the SearchRequest admin (no change)
+# This is the updated SearchRequest admin
 # -----------------------------------------------------------------
 @admin.register(SearchRequest)
 class SearchRequestAdmin(admin.ModelAdmin):
-    list_display = ['id', 'status', 'class_level', 'created_at']
-    list_filter = ['status']
+    
+    # --- ADD 'year' TO THE DISPLAY AND FILTERS ---
+    list_display = ['id', 'status', 'class_level', 'year', 'created_at']
+    list_filter = ['status', 'class_level', 'year']
