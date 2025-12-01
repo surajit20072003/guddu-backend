@@ -1,7 +1,10 @@
 # authentication/urls.py
 
 from django.urls import path
-from .views import RegisterView, LoginView, LogoutView,ProfileView
+from .views import (
+    RegisterView, LoginView, LogoutView, ProfileView,
+    PlanListView, PlanDetailView, SubscriptionView, SubscriptionPriceView
+)
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -16,5 +19,13 @@ urlpatterns = [
     
     # Route for user logout (blacklists the refresh token)
     path('logout/', LogoutView.as_view(), name='auth_logout'),
-    path('profile/', ProfileView.as_view(), name='user-profile')
+    path('profile/', ProfileView.as_view(), name='user-profile'),
+    
+    # Plan endpoints
+    path('plans/', PlanListView.as_view(), name='plan-list'),
+    path('plans/<int:pk>/', PlanDetailView.as_view(), name='plan-detail'),
+    
+    # Subscription endpoints
+    path('subscription/', SubscriptionView.as_view(), name='subscription'),
+    path('subscription/price/', SubscriptionPriceView.as_view(), name='subscription-price'),
 ]
