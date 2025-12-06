@@ -49,7 +49,22 @@ class VideoResult(models.Model):
     """
     Each video is now linked to a 'KeywordTag'.
     """
-    tag = models.ForeignKey(KeywordTag, related_name='videos', on_delete=models.CASCADE)
+    tag = models.ForeignKey(
+        KeywordTag, 
+        related_name='videos', 
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
+    
+    # NEW: Link to Topic
+    topic = models.ForeignKey(
+        'authentication.Topic',
+        related_name='videos',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True
+    )
     APPROVAL_CHOICES = [
         ('PENDING', 'Pending'),
         ('APPROVED', 'Approved'),

@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import User, UserProfile, Plan, PlanPricing, Subscription, ProfileSubscription
+from .models import User, UserProfile, Plan, PlanPricing, Subscription, ProfileSubscription, Course, Syllabus, Subject, Chapter, Topic, Task, TaskItem, TaskVideo, TaskQuiz, TaskGame, TaskActivity
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password2 = serializers.CharField(write_only=True, required=True, label="Confirm Password")
@@ -239,3 +239,140 @@ class SubscriptionPriceSerializer(serializers.Serializer):
                 })
         
         return attrs
+
+
+# ==================== COURSE SERIALIZERS ===================
+
+class CourseSerializer(serializers.ModelSerializer):
+    grade_display = serializers.CharField(source='get_grade_display', read_only=True)
+    
+    class Meta:
+        model = Course
+        fields = ['id', 'title', 'description', 'grade', 'grade_display', 
+                  'thumbnail', 'is_active', 'created_at', 'updated_at']
+
+
+class SyllabusSerializer(serializers.ModelSerializer):
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    
+    class Meta:
+        model = Syllabus
+        fields = ['id', 'course', 'course_title', 'title', 'description', 
+                  'academic_year', 'is_active', 'created_at', 'updated_at']
+
+
+class SubjectSerializer(serializers.ModelSerializer):
+    syllabus_title = serializers.CharField(source='syllabus.title', read_only=True)
+    
+    class Meta:
+        model = Subject
+        fields = ['id', 'syllabus', 'syllabus_title', 'name', 'description', 
+                  'order', 'icon', 'is_active', 'created_at', 'updated_at']
+
+
+class ChapterSerializer(serializers.ModelSerializer):
+    subject_name = serializers.CharField(source='subject.name', read_only=True)
+    
+    class Meta:
+        model = Chapter
+        fields = ['id', 'subject', 'subject_name', 'title', 'description', 
+                  'chapter_number', 'is_active', 'created_at', 'updated_at']
+
+
+class TopicSerializer(serializers.ModelSerializer):
+    chapter_title = serializers.CharField(source='chapter.title', read_only=True)
+    
+    class Meta:
+        model = Topic
+        fields = ['id', 'chapter', 'chapter_title', 'title', 'description', 
+                  'order', 'search_status', 'last_searched_at', 'is_active', 
+                  'created_at', 'updated_at']
+        read_only_fields = ['search_status', 'last_searched_at']
+
+
+
+
+class TaskVideoSerializer(serializers.ModelSerializer):
+    video_title = serializers.CharField(source='video.title', read_only=True)
+    video_url = serializers.CharField(source='video.url', read_only=True)
+    thumbnail_url = serializers.CharField(source='video.thumbnail_url', read_only=True)
+    duration = serializers.CharField(source='video.duration', read_only=True)
+    channel_title = serializers.CharField(source='video.channel_title', read_only=True)
+    
+    class Meta:
+        model = TaskVideo
+        fields = ['id', 'video', 'video_title', 'video_url', 'thumbnail_url', 'duration', 'channel_title']
+class TaskQuizSerializer(serializers.ModelSerializer):
+    question_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = TaskQuiz
+        fields = ['id', 'questions', 'passing_score', 'time_limit', 'question_count']
+    
+    def get_question_count(self, obj):
+        return len(obj.questions) if obj.questions else 0
+class TaskGameSerializer(serializers.ModelSerializer):
+    difficulty_display = serializers.CharField(source='get_difficulty_display', read_only=True)
+    
+    class Meta:
+        model = TaskGame
+        fields = ['id', 'game_url', 'difficulty', 'difficulty_display', 'instructions']
+class TaskActivitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaskActivity
+        fields = ['id', 'instructions', 'materials_needed', 'estimated_time', 'image']
+class TaskItemSerializer(serializers.ModelSerializer):
+    video_data = TaskVideoSerializer(read_only=True)
+    quiz_data = TaskQuizSerializer(read_only=True)
+    game_data = TaskGameSerializer(read_only=True)
+    activity_data = TaskActivitySerializer(read_only=True)
+    item_type_display = serializers.CharField(source='get_item_type_display', read_only=True)
+    
+    class Meta:
+        model = TaskItem
+        fields = ['id', 'task', 'item_type', 'item_type_display', 'title', 'description', 
+                  'order', 'is_active', 'video_data', 'quiz_data', 'game_data', 'activity_data',
+                  'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
+class TaskSerializer(serializers.ModelSerializer):
+    items = TaskItemSerializer(many=True, read_only=True)
+    grade_display = serializers.CharField(source='get_grade_display', read_only=True)
+    day_range = serializers.CharField(read_only=True)
+    item_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Task
+        fields = ['id', 'grade', 'grade_display', 'start_day', 'end_day', 'day_range',
+                  'title', 'description', 'is_active', 'items', 'item_count',
+                  'created_by', 'created_at', 'updated_at']
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
+    
+    def get_item_count(self, obj):
+        return obj.items.filter(is_active=True).count()
+# Serializers for adding items
+class AddVideoItemSerializer(serializers.Serializer):
+    video_id = serializers.IntegerField()
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True)
+    order = serializers.IntegerField(default=0)
+class AddQuizItemSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True)
+    questions = serializers.JSONField()
+    passing_score = serializers.IntegerField(default=60)
+    time_limit = serializers.IntegerField(required=False, allow_null=True)
+    order = serializers.IntegerField(default=0)
+class AddGameItemSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True)
+    game_url = serializers.URLField()
+    difficulty = serializers.ChoiceField(choices=['EASY', 'MEDIUM', 'HARD'], default='EASY')
+    instructions = serializers.CharField(required=False, allow_blank=True)
+    order = serializers.IntegerField(default=0)
+class AddActivityItemSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True)
+    instructions = serializers.CharField()
+    materials_needed = serializers.CharField(required=False, allow_blank=True)
+    estimated_time = serializers.IntegerField()
+    order = serializers.IntegerField(default=0)

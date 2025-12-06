@@ -66,3 +66,37 @@ class AdminStartBatchView(APIView):
             {"message": "Batch processing of 80 tags has started in the background."},
             status=status.HTTP_202_ACCEPTED
         )
+
+
+class VideoListView(APIView):
+    """
+    List all videos with optional filtering
+    GET /api/videos/?approval_status=PENDING&topic=1
+    """
+    def get(self, request):
+        from .models import VideoResult
+        from .serializers import VideoResultSerializer
+        
+        # Get all videos
+        videos = VideoResult.objects.all()
+        
+        # Filter by approval_status if provided
+        approval_status = request.query_params.get('approval_status')
+        if approval_status:
+            videos = videos.filter(approval_status=approval_status)
+        
+        # Filter by topic if provided
+        topic_id = request.query_params.get('topic')
+        if topic_id:
+            videos = videos.filter(topic_id=topic_id)
+        
+        # Filter by tag if provided
+        tag_id = request.query_params.get('tag')
+        if tag_id:
+            videos = videos.filter(tag_id=tag_id)
+        
+        # Order by created date (newest first)
+        videos = videos.order_by('-id')
+        
+        serializer = VideoResultSerializer(videos, many=True)
+        return Response(serializer.data)

@@ -28,7 +28,7 @@ class VideoResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = VideoResult
         fields = [
-            'title', 'video_id', 'url', 'thumbnail_url',
+            'id', 'title', 'video_id', 'url', 'thumbnail_url',
             'channel_title', 'published_at', 'duration',
             'view_count', 'like_count', 'comment_count',
             'tags_from_video', 'description'

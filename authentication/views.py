@@ -12,11 +12,13 @@ from django.db import IntegrityError
 from .serializers import (
     UserRegistrationSerializer, UserProfileSerializer,
     PlanSerializer, SubscriptionSerializer, SubscriptionCreateSerializer,
-    SubscriptionPriceSerializer
+    SubscriptionPriceSerializer,
+    CourseSerializer, SyllabusSerializer, SubjectSerializer, ChapterSerializer, TopicSerializer,TaskSerializer,AddVideoItemSerializer,TaskItemSerializer
 )
-from .models import User, UserProfile, Plan, Subscription
+from .models import User, UserProfile, Plan, Subscription, Course, Syllabus, Subject, Chapter, Topic,Task,TaskItem,TaskVideo,TaskQuiz,TaskGame,TaskActivity
 from .utils import calculate_subscription_price, create_subscription, validate_profile_limits
 from django.utils import timezone
+import threading
 
 class RegisterView(APIView):
     """
@@ -430,3 +432,696 @@ class SubscriptionPriceView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': f'Failed to calculate price: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ==================== COURSE VIEWS ====================
+
+class CourseListCreateView(APIView):
+    """
+    GET: List all courses
+    POST: Create new course (Admin only)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        courses = Course.objects.filter(is_active=True)
+        serializer = CourseSerializer(courses, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = CourseSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CourseDetailView(APIView):
+    """
+    GET: View course details
+    PUT: Update course (Admin only)
+    DELETE: Delete course (Admin only)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Course.objects.get(pk=pk, is_active=True)
+        except Course.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        course = self.get_object(pk)
+        if not course:
+            return Response(
+                {"error": "Course not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = CourseSerializer(course)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        course = self.get_object(pk)
+        if not course:
+            return Response(
+                {"error": "Course not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = CourseSerializer(course, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        course = self.get_object(pk)
+        if not course:
+            return Response(
+                {"error": "Course not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        course.is_active = False  # Soft delete
+        course.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ==================== SYLLABUS VIEWS ====================
+
+class SyllabusListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        syllabi = Syllabus.objects.filter(is_active=True)
+        serializer = SyllabusSerializer(syllabi, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = SyllabusSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SyllabusDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Syllabus.objects.get(pk=pk, is_active=True)
+        except Syllabus.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        syllabus = self.get_object(pk)
+        if not syllabus:
+            return Response(
+                {"error": "Syllabus not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = SyllabusSerializer(syllabus)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        syllabus = self.get_object(pk)
+        if not syllabus:
+            return Response(
+                {"error": "Syllabus not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = SyllabusSerializer(syllabus, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        syllabus = self.get_object(pk)
+        if not syllabus:
+            return Response(
+                {"error": "Syllabus not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        syllabus.is_active = False
+        syllabus.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ==================== SUBJECT VIEWS ====================
+
+class SubjectListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        subjects = Subject.objects.filter(is_active=True)
+        serializer = SubjectSerializer(subjects, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = SubjectSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubjectDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Subject.objects.get(pk=pk, is_active=True)
+        except Subject.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        subject = self.get_object(pk)
+        if not subject:
+            return Response(
+                {"error": "Subject not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = SubjectSerializer(subject)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        subject = self.get_object(pk)
+        if not subject:
+            return Response(
+                {"error": "Subject not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = SubjectSerializer(subject, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        subject = self.get_object(pk)
+        if not subject:
+            return Response(
+                {"error": "Subject not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        subject.is_active = False
+        subject.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ==================== CHAPTER VIEWS ====================
+
+class ChapterListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        chapters = Chapter.objects.filter(is_active=True)
+        serializer = ChapterSerializer(chapters, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = ChapterSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ChapterDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Chapter.objects.get(pk=pk, is_active=True)
+        except Chapter.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        chapter = self.get_object(pk)
+        if not chapter:
+            return Response(
+                {"error": "Chapter not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = ChapterSerializer(chapter)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        chapter = self.get_object(pk)
+        if not chapter:
+            return Response(
+                {"error": "Chapter not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = ChapterSerializer(chapter, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        chapter = self.get_object(pk)
+        if not chapter:
+            return Response(
+                {"error": "Chapter not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        chapter.is_active = False
+        chapter.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ==================== TOPIC VIEWS ====================
+
+class TopicListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        topics = Topic.objects.filter(is_active=True)
+        serializer = TopicSerializer(topics, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = TopicSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TopicDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Topic.objects.get(pk=pk, is_active=True)
+        except Topic.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        topic = self.get_object(pk)
+        if not topic:
+            return Response(
+                {"error": "Topic not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = TopicSerializer(topic)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        topic = self.get_object(pk)
+        if not topic:
+            return Response(
+                {"error": "Topic not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = TopicSerializer(topic, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response(
+                {"error": "Admin access required"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        topic = self.get_object(pk)
+        if not topic:
+            return Response(
+                {"error": "Topic not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        topic.is_active = False
+        topic.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+class AdminProcessTopicBatchView(APIView):
+    """
+    Admin manually triggers YouTube search for topics
+    Runs processing function in background thread
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        # Check admin permission
+        # if not request.user.is_staff:
+        #     return Response(
+        #         {"error": "Admin access required"}, 
+        #         status=status.HTTP_403_FORBIDDEN
+        #     )
+        
+        # Import processing function
+        from .cron import process_topic_batch
+        
+        # Run in background thread
+        thread = threading.Thread(target=process_topic_batch)
+        thread.daemon = True
+        thread.start()
+        
+        # Return immediately
+        return Response({
+            "message": "Topic batch processing started in background"
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+
+class AdminTaskListCreateView(APIView):
+    """Admin: List and create tasks"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        grade = request.query_params.get('grade')
+        tasks = Task.objects.filter(is_active=True)
+        
+        if grade:
+            tasks = tasks.filter(grade=grade)
+        
+        serializer = TaskSerializer(tasks, many=True)
+        return Response(serializer.data)
+    
+    def post(self, request):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        serializer = TaskSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(created_by=request.user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class AdminTaskDetailView(APIView):
+    """Admin: Get, update, delete task"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        try:
+            return Task.objects.get(pk=pk, is_active=True)
+        except Task.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        task = self.get_object(pk)
+        if not task:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = TaskSerializer(task)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        task = self.get_object(pk)
+        if not task:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = TaskSerializer(task, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        if not request.user.is_staff:
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        task = self.get_object(pk)
+        if not task:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        task.is_active = False
+        task.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+class AdminAddVideoItemView(APIView):
+    """Admin: Add video item to task"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, task_id):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            task = Task.objects.get(pk=task_id, is_active=True)
+        except Task.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddVideoItemSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check video exists and is approved
+        from api.models import VideoResult
+        try:
+            video = VideoResult.objects.get(pk=serializer.validated_data['video_id'], approval_status='APPROVED')
+        except VideoResult.DoesNotExist:
+            return Response({"error": "Approved video not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Create task item
+        task_item = TaskItem.objects.create(
+            task=task,
+            item_type='VIDEO',
+            title=serializer.validated_data['title'],
+            description=serializer.validated_data.get('description', ''),
+            order=serializer.validated_data.get('order', 0)
+        )
+        
+        # Create video data
+        TaskVideo.objects.create(
+            task_item=task_item,
+            video=video
+        )
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
+class AdminAddQuizItemView(APIView):
+    """Admin: Add quiz item to task"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, task_id):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            task = Task.objects.get(pk=task_id, is_active=True)
+        except Task.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddQuizItemSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create task item
+        task_item = TaskItem.objects.create(
+            task=task,
+            item_type='QUIZ',
+            title=serializer.validated_data['title'],
+            description=serializer.validated_data.get('description', ''),
+            order=serializer.validated_data.get('order', 0)
+        )
+        
+        # Create quiz data
+        TaskQuiz.objects.create(
+            task_item=task_item,
+            questions=serializer.validated_data['questions'],
+            passing_score=serializer.validated_data.get('passing_score', 60),
+            time_limit=serializer.validated_data.get('time_limit')
+        )
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
+class AdminAddGameItemView(APIView):
+    """Admin: Add game item to task"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, task_id):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            task = Task.objects.get(pk=task_id, is_active=True)
+        except Task.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddGameItemSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create task item
+        task_item = TaskItem.objects.create(
+            task=task,
+            item_type='GAME',
+            title=serializer.validated_data['title'],
+            description=serializer.validated_data.get('description', ''),
+            order=serializer.validated_data.get('order', 0)
+        )
+        
+        # Create game data
+        TaskGame.objects.create(
+            task_item=task_item,
+            game_url=serializer.validated_data['game_url'],
+            difficulty=serializer.validated_data.get('difficulty', 'EASY'),
+            instructions=serializer.validated_data.get('instructions', '')
+        )
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
+class AdminAddActivityItemView(APIView):
+    """Admin: Add activity item to task"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, task_id):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            task = Task.objects.get(pk=task_id, is_active=True)
+        except Task.DoesNotExist:
+            return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddActivityItemSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Create task item
+        task_item = TaskItem.objects.create(
+            task=task,
+            item_type='ACTIVITY',
+            title=serializer.validated_data['title'],
+            description=serializer.validated_data.get('description', ''),
+            order=serializer.validated_data.get('order', 0)
+        )
+        
+        # Create activity data
+        TaskActivity.objects.create(
+            task_item=task_item,
+            instructions=serializer.validated_data['instructions'],
+            materials_needed=serializer.validated_data.get('materials_needed', ''),
+            estimated_time=serializer.validated_data['estimated_time']
+        )
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
+class AdminApprovedVideosListView(APIView):
+    """Admin: List approved videos for selection"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        # if not request.user.is_staff:
+        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        
+        from api.models import VideoResult
+        from api.serializers import VideoResultSerializer
+        
+        videos = VideoResult.objects.filter(approval_status='APPROVED')
+        
+        # Filter by grade
+        grade = request.query_params.get('grade')
+        if grade:
+            videos = videos.filter(topic__chapter__subject__syllabus__course__grade=grade)
+        
+        # Search by title
+        search = request.query_params.get('search')
+        if search:
+            videos = videos.filter(title__icontains=search)
+        
+        videos = videos.order_by('-id')[:50]  # Limit to 50
+        serializer = VideoResultSerializer(videos, many=True)
+        return Response(serializer.data)

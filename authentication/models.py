@@ -238,3 +238,218 @@ class ProfileSubscription(models.Model):
     def __str__(self):
         return f"{self.subscription} - {self.profile.full_name} ({self.get_grade_display()})"
 
+
+
+class Course(models.Model):
+    """
+    Main course (e.g., "LKG Mathematics", "UKG English")
+    """
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    grade = models.CharField(
+        max_length=10, 
+        choices=enums.Grade.choices,
+        help_text="Target grade for this course"
+    )
+    thumbnail = models.ImageField(upload_to='courses/', null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['grade', 'title']
+    
+    def __str__(self):
+        return f"{self.title} ({self.get_grade_display()})"
+
+
+class Syllabus(models.Model):
+    """
+    Syllabus for a course (e.g., "2024-25 Syllabus")
+    """
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='syllabi')
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    academic_year = models.CharField(max_length=20, blank=True, help_text="e.g., 2024-25")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-academic_year']
+        verbose_name_plural = "Syllabi"
+    
+    def __str__(self):
+        return f"{self.course.title} - {self.title}"
+
+
+class Subject(models.Model):
+    """
+    Subject (e.g., "Mathematics", "English", "Science")
+    """
+    syllabus = models.ForeignKey(Syllabus, on_delete=models.CASCADE, related_name='subjects')
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0, help_text="Display order")
+    icon = models.CharField(max_length=50, blank=True, help_text="Icon name or emoji")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['order', 'name']
+    
+    def __str__(self):
+        return self.name
+
+
+class Chapter(models.Model):
+    """
+    Chapter (e.g., "Chapter 1: Numbers")
+    """
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='chapters')
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    chapter_number = models.PositiveIntegerField(help_text="Chapter sequence number")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['chapter_number']
+    
+    def __str__(self):
+        return f"Ch {self.chapter_number}: {self.title}"
+
+
+class Topic(models.Model):
+    """
+    Topic within a chapter (e.g., "Counting 1-10", "Addition basics")
+    """
+    chapter = models.ForeignKey(Chapter, on_delete=models.CASCADE, related_name='topics')
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0, help_text="Display order within chapter")
+    
+    # NEW: Search status tracking
+    SEARCH_STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('PROCESSING', 'Processing'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+    ]
+    search_status = models.CharField(
+        max_length=20, 
+        choices=SEARCH_STATUS_CHOICES, 
+        default='PENDING'
+    )
+    last_searched_at = models.DateTimeField(null=True, blank=True)
+    
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['order']
+    
+    def __str__(self):
+        return self.title
+
+
+class Task(models.Model):
+    """
+    Task for a day range (e.g., Days 1-5)
+    Contains multiple items (videos, quizzes, games, activities)
+    """
+    grade = models.CharField(max_length=20, choices=enums.Grade.choices)
+    start_day = models.PositiveIntegerField(help_text="Starting day number")
+    end_day = models.PositiveIntegerField(help_text="Ending day number")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_tasks')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['grade', 'start_day']
+        unique_together = ['grade', 'start_day', 'end_day']
+    
+    def __str__(self):
+        return f"{self.grade} - Days {self.start_day}-{self.end_day}: {self.title}"
+    
+    def day_range(self):
+        return f"{self.start_day}-{self.end_day}"
+
+
+
+class TaskItem(models.Model):
+    """
+    Individual item within a task (video, quiz, game, or activity)
+    """
+    ITEM_TYPE_CHOICES = [
+        ('VIDEO', 'Video'),
+        ('QUIZ', 'Quiz'),
+        ('GAME', 'Game'),
+        ('ACTIVITY', 'Activity'),
+    ]
+    
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='items')
+    item_type = models.CharField(max_length=20, choices=ITEM_TYPE_CHOICES)
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    order = models.PositiveIntegerField(default=0, help_text="Display order within task")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['order', 'created_at']
+    
+    def __str__(self):
+        return f"{self.get_item_type_display()}: {self.title}"
+        
+class TaskVideo(models.Model):
+    """Video item - links to approved VideoResult"""
+    task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='video_data')
+    video = models.ForeignKey('api.VideoResult', on_delete=models.CASCADE, limit_choices_to={'approval_status': 'APPROVED'})
+    
+    def __str__(self):
+        return f"Video: {self.video.title}"
+
+class TaskQuiz(models.Model):
+    """Quiz item with questions"""
+    task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='quiz_data')
+    questions = models.JSONField(help_text="Array of question objects")
+    passing_score = models.PositiveIntegerField(default=60, help_text="Percentage required to pass")
+    time_limit = models.PositiveIntegerField(null=True, blank=True, help_text="Time limit in minutes")
+    
+    def __str__(self):
+        return f"Quiz: {self.task_item.title}"
+
+class TaskGame(models.Model):
+    """Game item with URL"""
+    DIFFICULTY_CHOICES = [
+        ('EASY', 'Easy'),
+        ('MEDIUM', 'Medium'),
+        ('HARD', 'Hard'),
+    ]
+    
+    task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='game_data')
+    game_url = models.URLField()
+    difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default='EASY')
+    instructions = models.TextField(blank=True)
+    
+    def __str__(self):
+        return f"Game: {self.task_item.title}"   
+           
+class TaskActivity(models.Model):
+    """Activity item with instructions"""
+    task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='activity_data')
+    instructions = models.TextField()
+    materials_needed = models.TextField(blank=True, help_text="Materials required for activity")
+    estimated_time = models.PositiveIntegerField(help_text="Estimated time in minutes")
+    image = models.ImageField(upload_to='activity_images/', null=True, blank=True)
+    
+    def __str__(self):
+        return f"Activity: {self.task_item.title}"
