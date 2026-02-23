@@ -1,7 +1,6 @@
 from django.utils import timezone
-from .models import Topic
-from api.models import VideoResult
-from api.youtube_client import get_youtube_videos
+from .models import Topic, VideoResult
+from .youtube_client import get_youtube_videos
 import logging
 
 logger = logging.getLogger(__name__)

@@ -1,9 +1,10 @@
 # api/tasks.py
 from celery import shared_task
 from django.utils import timezone
-from .models import SearchRequest, KeywordTag, VideoResult
+from .models import SearchRequest, KeywordTag
+from authentication.models import VideoResult
 from .parsers import get_keywords_from_file, extract_keywords_from_text
-from .youtube_client import get_youtube_videos
+from authentication.youtube_client import get_youtube_videos
 
 @shared_task
 def extract_tags_from_request(request_id):

@@ -21,6 +21,7 @@ class SearchRequest(models.Model):
         return f"Request {self.id} - {self.status}"
 
 
+
 class KeywordTag(models.Model):
     """
     This is our "To-Do" list. Each tag is saved only once.
@@ -43,52 +44,3 @@ class KeywordTag(models.Model):
 
     def __str__(self):
         return self.tag_text
-
-
-class VideoResult(models.Model):
-    """
-    Each video is now linked to a 'KeywordTag'.
-    """
-    tag = models.ForeignKey(
-        KeywordTag, 
-        related_name='videos', 
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True
-    )
-    
-    # NEW: Link to Topic
-    topic = models.ForeignKey(
-        'authentication.Topic',
-        related_name='videos',
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True
-    )
-    APPROVAL_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('APPROVED', 'Approved'),
-        ('DISAPPROVED', 'Disapproved'),
-    ]
-    approval_status = models.CharField(
-        max_length=20,
-        choices=APPROVAL_CHOICES,
-        default='PENDING'
-    )
-    
-    video_id = models.CharField(max_length=50) # unique=True has been removed
-    title = models.CharField(max_length=500)
-    description = models.TextField(null=True, blank=True)
-    url = models.URLField(max_length=500)
-    thumbnail_url = models.URLField(max_length=500, null=True, blank=True)
-    channel_title = models.CharField(max_length=200, null=True, blank=True)
-    published_at = models.DateTimeField(null=True, blank=True)
-    duration = models.CharField(max_length=20, null=True, blank=True)
-    view_count = models.BigIntegerField(null=True, blank=True)
-    like_count = models.BigIntegerField(null=True, blank=True)
-    comment_count = models.BigIntegerField(null=True, blank=True)
-    tags_from_video = models.TextField(null=True, blank=True) 
-    category_id = models.CharField(max_length=10, null=True, blank=True)
-
-    def __str__(self):
-        return self.title

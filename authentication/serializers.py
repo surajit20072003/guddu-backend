@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import User, UserProfile, Plan, PlanPricing, Subscription, ProfileSubscription, Course, Syllabus, Subject, Chapter, Topic, Task, TaskItem, TaskVideo, TaskQuiz, TaskGame, TaskActivity
+from .models import User, UserProfile, Plan, PlanPricing, Subscription, ProfileSubscription, Course, Syllabus, Subject, Chapter, Topic, Task, TaskItem, TaskVideo, TaskQuiz, TaskGame, TaskActivity,VideoResult
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password2 = serializers.CharField(write_only=True, required=True, label="Confirm Password")
@@ -291,6 +291,28 @@ class TopicSerializer(serializers.ModelSerializer):
 
 
 
+# ==================== VIDEO SERIALIZERS ====================
+
+class VideoResultSerializer(serializers.ModelSerializer):
+    """Serializer for video results"""
+    class Meta:
+        model = VideoResult
+        fields = [
+            'id', 'title', 'video_id', 'url', 'thumbnail_url',
+            'channel_title', 'published_at', 'duration',
+            'view_count', 'like_count', 'comment_count',
+            'tags_from_video', 'description', 'approval_status', 
+            'topic', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'video_id', 'title', 'url', 'thumbnail_url',
+            'channel_title', 'published_at', 'duration',
+            'view_count', 'like_count', 'comment_count',
+            'tags_from_video', 'description', 'created_at', 'updated_at'
+        ]
+
+
+# ==================== TASK ITEM SERIALIZERS ====================
 
 class TaskVideoSerializer(serializers.ModelSerializer):
     video_title = serializers.CharField(source='video.title', read_only=True)
@@ -304,10 +326,12 @@ class TaskVideoSerializer(serializers.ModelSerializer):
         fields = ['id', 'video', 'video_title', 'video_url', 'thumbnail_url', 'duration', 'channel_title']
 class TaskQuizSerializer(serializers.ModelSerializer):
     question_count = serializers.SerializerMethodField()
+    quiz_type_display = serializers.CharField(source='get_quiz_type_display', read_only=True)
     
     class Meta:
         model = TaskQuiz
-        fields = ['id', 'questions', 'passing_score', 'time_limit', 'question_count']
+        fields = ['id', 'quiz_type', 'quiz_type_display', 'questions', 'passing_score', 
+                  'time_limit', 'shuffle_questions', 'question_count']
     
     def get_question_count(self, obj):
         return len(obj.questions) if obj.questions else 0
@@ -322,52 +346,114 @@ class TaskActivitySerializer(serializers.ModelSerializer):
         model = TaskActivity
         fields = ['id', 'instructions', 'materials_needed', 'estimated_time', 'image']
 class TaskItemSerializer(serializers.ModelSerializer):
+    """Serializer for TaskItem (polymorphic)"""
     video_data = TaskVideoSerializer(read_only=True)
     quiz_data = TaskQuizSerializer(read_only=True)
     game_data = TaskGameSerializer(read_only=True)
     activity_data = TaskActivitySerializer(read_only=True)
-    item_type_display = serializers.CharField(source='get_item_type_display', read_only=True)
     
     class Meta:
         model = TaskItem
-        fields = ['id', 'task', 'item_type', 'item_type_display', 'title', 'description', 
-                  'order', 'is_active', 'video_data', 'quiz_data', 'game_data', 'activity_data',
-                  'created_at', 'updated_at']
-        read_only_fields = ['created_at', 'updated_at']
+        fields = ['id', 'task', 'item_type', 'title', 'day_number', 'order', 'is_active', 
+                  'video_data', 'quiz_data', 'game_data', 'activity_data', 'created_at']
 class TaskSerializer(serializers.ModelSerializer):
     items = TaskItemSerializer(many=True, read_only=True)
-    grade_display = serializers.CharField(source='get_grade_display', read_only=True)
-    day_range = serializers.CharField(read_only=True)
+    grade = serializers.CharField(read_only=True)  # Comes from topic hierarchy
+    topic_title = serializers.CharField(source='topic.title', read_only=True)
+    chapter_title = serializers.CharField(source='topic.chapter.title', read_only=True)
     item_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Task
-        fields = ['id', 'grade', 'grade_display', 'start_day', 'end_day', 'day_range',
-                  'title', 'description', 'is_active', 'items', 'item_count',
-                  'created_by', 'created_at', 'updated_at']
+        fields = ['id', 'topic', 'topic_title', 'chapter_title', 'grade', 'title', 'description', 
+                  'start_day', 'end_day', 'is_active', 'items', 'item_count', 'created_at', 'updated_at']
         read_only_fields = ['created_by', 'created_at', 'updated_at']
     
     def get_item_count(self, obj):
         return obj.items.filter(is_active=True).count()
 # Serializers for adding items
 class AddVideoItemSerializer(serializers.Serializer):
+    """Serializer for adding a video item to a task"""
     video_id = serializers.IntegerField()
     title = serializers.CharField(max_length=200)
     description = serializers.CharField(required=False, allow_blank=True)
+    day_number = serializers.IntegerField(min_value=1, required=True, help_text="Which day this video belongs to")
     order = serializers.IntegerField(default=0)
 class AddQuizItemSerializer(serializers.Serializer):
+    """Serializer for adding a quiz item to a task"""
     title = serializers.CharField(max_length=200)
     description = serializers.CharField(required=False, allow_blank=True)
+    quiz_type = serializers.ChoiceField(choices=['QUESTION_OPTIONS', 'MATCH_MAKING'], default='QUESTION_OPTIONS')
     questions = serializers.JSONField()
-    passing_score = serializers.IntegerField(default=60)
+    passing_score = serializers.IntegerField(min_value=0, max_value=100, default=70)
+    day_number = serializers.IntegerField(min_value=1, required=True, help_text="Which day this quiz belongs to")
     time_limit = serializers.IntegerField(required=False, allow_null=True)
+    shuffle_questions = serializers.BooleanField(default=True)
     order = serializers.IntegerField(default=0)
+    
+    def validate(self, attrs):
+        """Validate questions structure based on quiz_type"""
+        quiz_type = attrs.get('quiz_type')
+        questions = attrs.get('questions')
+        
+        if not isinstance(questions, list):
+            raise serializers.ValidationError({'questions': 'Questions must be a list'})
+        
+        if len(questions) == 0:
+            raise serializers.ValidationError({'questions': 'At least one question is required'})
+        
+        if quiz_type == 'QUESTION_OPTIONS':
+            # Validate question-options structure
+            for idx, q in enumerate(questions):
+                if 'question' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "question" field is required'
+                    })
+                if 'options' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "options" field is required'
+                    })
+                if 'correct_answer' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "correct_answer" field is required'
+                    })
+                if not isinstance(q['options'], list) or len(q['options']) < 2:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: At least 2 options are required'
+                    })
+        
+        elif quiz_type == 'MATCH_MAKING':
+            # Validate match-making structure
+            for idx, q in enumerate(questions):
+                if 'instruction' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "instruction" field is required'
+                    })
+                if 'pairs' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "pairs" field is required'
+                    })
+                if 'correct_matches' not in q:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "correct_matches" field is required'
+                    })
+                if not isinstance(q['pairs'], list) or len(q['pairs']) < 2:
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: At least 2 pairs are required'
+                    })
+                if not isinstance(q['correct_matches'], list):
+                    raise serializers.ValidationError({
+                        'questions': f'Question {idx+1}: "correct_matches" must be a list'
+                    })
+        
+        return attrs
 class AddGameItemSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
     description = serializers.CharField(required=False, allow_blank=True)
     game_url = serializers.URLField()
     difficulty = serializers.ChoiceField(choices=['EASY', 'MEDIUM', 'HARD'], default='EASY')
     instructions = serializers.CharField(required=False, allow_blank=True)
+    day_number = serializers.IntegerField(min_value=1, required=True, help_text="Which day this game belongs to")
     order = serializers.IntegerField(default=0)
 class AddActivityItemSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=200)
@@ -375,4 +461,20 @@ class AddActivityItemSerializer(serializers.Serializer):
     instructions = serializers.CharField()
     materials_needed = serializers.CharField(required=False, allow_blank=True)
     estimated_time = serializers.IntegerField()
+    day_number = serializers.IntegerField(min_value=1, required=True, help_text="Which day this activity belongs to")
     order = serializers.IntegerField(default=0)
+
+
+# ==================== QUIZ ANSWER SUBMISSION ====================
+
+class QuizAnswerSerializer(serializers.Serializer):
+    """Serializer for quiz answer submission"""
+    task_item_id = serializers.IntegerField()
+    user_answers = serializers.JSONField(help_text="User's answers - format depends on quiz type")
+    time_taken = serializers.IntegerField(required=False, help_text="Time taken in seconds")
+    
+    def validate_user_answers(self, value):
+        """Basic validation for user answers"""
+        if not isinstance(value, (list, dict)):
+            raise serializers.ValidationError("user_answers must be a list or dict")
+        return value

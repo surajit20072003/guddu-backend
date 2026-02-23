@@ -356,12 +356,49 @@ class Topic(models.Model):
         return self.title
 
 
+class VideoResult(models.Model):
+    """
+    YouTube video results from topic searches
+    """
+    APPROVAL_STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('APPROVED', 'Approved'),
+        ('DISAPPROVED', 'Disapproved'),
+    ]
+    
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='videos')
+    video_id = models.CharField(max_length=50)
+    approval_status = models.CharField(max_length=20, choices=APPROVAL_STATUS_CHOICES, default='PENDING')
+    title = models.CharField(max_length=500)
+    description = models.TextField(blank=True, null=True)
+    url = models.URLField(max_length=500)
+    thumbnail_url = models.URLField(max_length=500, blank=True, null=True)
+    channel_title = models.CharField(max_length=200, blank=True, null=True)
+    published_at = models.DateTimeField(blank=True, null=True)
+    duration = models.CharField(max_length=20, blank=True, null=True)
+    view_count = models.BigIntegerField(blank=True, null=True)
+    like_count = models.BigIntegerField(blank=True, null=True)
+    comment_count = models.BigIntegerField(blank=True, null=True)
+    tags_from_video = models.TextField(blank=True, null=True)
+    category_id = models.CharField(max_length=10, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-view_count']
+        unique_together = ['topic', 'video_id']
+    
+    def __str__(self):
+        return f"{self.title} ({self.get_approval_status_display()})"
+
+
 class Task(models.Model):
     """
     Task for a day range (e.g., Days 1-5)
     Contains multiple items (videos, quizzes, games, activities)
+    Linked to a specific topic
     """
-    grade = models.CharField(max_length=20, choices=enums.Grade.choices)
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name='tasks', null=True, blank=True)
     start_day = models.PositiveIntegerField(help_text="Starting day number")
     end_day = models.PositiveIntegerField(help_text="Ending day number")
     title = models.CharField(max_length=200)
@@ -372,14 +409,20 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['grade', 'start_day']
-        unique_together = ['grade', 'start_day', 'end_day']
+        ordering = ['start_day']
     
     def __str__(self):
-        return f"{self.grade} - Days {self.start_day}-{self.end_day}: {self.title}"
+        return f"{self.topic.title if self.topic else 'No Topic'} - Days {self.start_day}-{self.end_day}: {self.title}"
     
     def day_range(self):
         return f"{self.start_day}-{self.end_day}"
+    
+    @property
+    def grade(self):
+        """Get grade from topic's course"""
+        if self.topic and self.topic.chapter and self.topic.chapter.subject and self.topic.chapter.subject.syllabus:
+            return self.topic.chapter.subject.syllabus.course.grade
+        return None
 
 
 
@@ -398,13 +441,14 @@ class TaskItem(models.Model):
     item_type = models.CharField(max_length=20, choices=ITEM_TYPE_CHOICES)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    order = models.PositiveIntegerField(default=0, help_text="Display order within task")
+    day_number = models.PositiveIntegerField(help_text="Specific day number within the task range")
+    order = models.PositiveIntegerField(default=0, help_text="Display order within the same day")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['order', 'created_at']
+        ordering = ['day_number', 'order', 'created_at']
     
     def __str__(self):
         return f"{self.get_item_type_display()}: {self.title}"
@@ -412,17 +456,23 @@ class TaskItem(models.Model):
 class TaskVideo(models.Model):
     """Video item - links to approved VideoResult"""
     task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='video_data')
-    video = models.ForeignKey('api.VideoResult', on_delete=models.CASCADE, limit_choices_to={'approval_status': 'APPROVED'})
+    video = models.ForeignKey(VideoResult, on_delete=models.CASCADE, limit_choices_to={'approval_status': 'APPROVED'})
     
     def __str__(self):
         return f"Video: {self.video.title}"
 
 class TaskQuiz(models.Model):
     """Quiz item with questions"""
+    QUIZ_TYPE_CHOICES = [
+        ('QUESTION_OPTIONS', 'Question Options'),
+        ('MATCH_MAKING', 'Match Making'),
+    ]
     task_item = models.OneToOneField(TaskItem, on_delete=models.CASCADE, related_name='quiz_data')
+    quiz_type = models.CharField(max_length=20, choices=QUIZ_TYPE_CHOICES, default='QUESTION_OPTIONS')
     questions = models.JSONField(help_text="Array of question objects")
     passing_score = models.PositiveIntegerField(default=60, help_text="Percentage required to pass")
     time_limit = models.PositiveIntegerField(null=True, blank=True, help_text="Time limit in minutes")
+    shuffle_questions = models.BooleanField(default=True, help_text="Randomize question order")
     
     def __str__(self):
         return f"Quiz: {self.task_item.title}"
@@ -453,3 +503,29 @@ class TaskActivity(models.Model):
     
     def __str__(self):
         return f"Activity: {self.task_item.title}"
+
+
+# class UserTaskProgress(models.Model):
+#     """
+#     Tracks user's progress through tasks and days
+#     """
+#     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='task_progress')
+#     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='student_progress')
+    
+#     # Progress tracking
+#     current_day = models.PositiveIntegerField(default=1)
+#     completed_days = models.JSONField(default=list, help_text="List of completed day numbers")
+    
+#     # Date tracking for unlocking content
+#     started_at = models.DateTimeField(auto_now_add=True)
+#     last_accessed = models.DateTimeField(auto_now=True)
+    
+#     # Status
+#     is_completed = models.BooleanField(default=False)
+#     completion_date = models.DateTimeField(null=True, blank=True)
+    
+#     class Meta:
+#         unique_together = ['user', 'task']
+        
+#     def __str__(self):
+#         return f"{self.user.email} - {self.task.title} (Day {self.current_day})"

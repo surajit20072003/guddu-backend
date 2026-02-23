@@ -74,8 +74,8 @@ class VideoListView(APIView):
     GET /api/videos/?approval_status=PENDING&topic=1
     """
     def get(self, request):
-        from .models import VideoResult
-        from .serializers import VideoResultSerializer
+        from authentication.models import VideoResult
+        from authentication.serializers import VideoResultSerializer
         
         # Get all videos
         videos = VideoResult.objects.all()
@@ -100,3 +100,126 @@ class VideoListView(APIView):
         
         serializer = VideoResultSerializer(videos, many=True)
         return Response(serializer.data)
+
+
+class VideoDetailView(APIView):
+    """
+    GET: View single video details
+    PUT: Update video (approval_status, topic)
+    DELETE: Delete video
+    """
+    # permission_classes = [IsAdminUser]  # Uncomment for production
+    
+    def get_object(self, pk):
+        """Helper method to get video by ID"""
+        from authentication.models import VideoResult
+        try:
+            return VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        """Get video details"""
+        from authentication.serializers import VideoResultSerializer
+        
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = VideoResultSerializer(video)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        """Update video (approval_status, topic)"""
+        from authentication.serializers import VideoResultSerializer
+        
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = VideoResultSerializer(video, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        """Delete video"""
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        video.delete()
+        return Response(
+            {"message": "Video deleted successfully"}, 
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+class VideoApproveView(APIView):
+    """
+    Quick approve a video
+    POST /api/videos/{id}/approve/
+    """
+    # permission_classes = [IsAdminUser]  # Uncomment for production
+    
+    def post(self, request, pk):
+        from authentication.models import VideoResult
+        from authentication.serializers import VideoResultSerializer
+        
+        try:
+            video = VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update approval status
+        video.approval_status = 'APPROVED'
+        video.save()
+        
+        serializer = VideoResultSerializer(video)
+        return Response({
+            "message": "Video approved successfully",
+            "video": serializer.data
+        })
+
+
+class VideoDisapproveView(APIView):
+    """
+    Quick disapprove a video
+    POST /api/videos/{id}/disapprove/
+    """
+    # permission_classes = [IsAdminUser]  # Uncomment for production
+    
+    def post(self, request, pk):
+        from authentication.models import VideoResult
+        from authentication.serializers import VideoResultSerializer
+        
+        try:
+            video = VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update approval status
+        video.approval_status = 'DISAPPROVED'
+        video.save()
+        
+        serializer = VideoResultSerializer(video)
+        return Response({
+            "message": "Video disapproved successfully",
+            "video": serializer.data
+        })

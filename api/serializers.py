@@ -1,7 +1,7 @@
 
 
 from rest_framework import serializers
-from .models import SearchRequest, KeywordTag, VideoResult
+from .models import SearchRequest, KeywordTag
 
 class SearchUploadSerializer(serializers.ModelSerializer):
     """
@@ -23,21 +23,8 @@ class SearchUploadSerializer(serializers.ModelSerializer):
         fields = ['uploaded_file', 'tags_from_user', 'class_level','year']
 
 
-class VideoResultSerializer(serializers.ModelSerializer):
-    """Serializer for returning video results."""
-    class Meta:
-        model = VideoResult
-        fields = [
-            'id', 'title', 'video_id', 'url', 'thumbnail_url',
-            'channel_title', 'published_at', 'duration',
-            'view_count', 'like_count', 'comment_count',
-            'tags_from_video', 'description'
-        ]
-
 class KeywordTagSerializer(serializers.ModelSerializer):
-    """Serializer to show a tag and its related videos."""
-    videos = VideoResultSerializer(many=True, read_only=True)
-
+    """Serializer to show a tag"""
     class Meta:
         model = KeywordTag
-        fields = ['tag_text', 'status', 'last_searched_at', 'videos']
+        fields = ['id', 'tag_text', 'status', 'last_searched_at']

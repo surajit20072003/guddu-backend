@@ -10,8 +10,5 @@ urlpatterns = [
     
     # Endpoint 2: For the admin to start the 80-tag batch
     path('admin/start-batch-process/', views.AdminStartBatchView.as_view(), name='admin-start-batch'),
-    
-    # Endpoint 3: List all videos
-    path('videos/', views.VideoListView.as_view(), name='video-list'),
 
 ]

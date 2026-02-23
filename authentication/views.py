@@ -13,9 +13,9 @@ from .serializers import (
     UserRegistrationSerializer, UserProfileSerializer,
     PlanSerializer, SubscriptionSerializer, SubscriptionCreateSerializer,
     SubscriptionPriceSerializer,
-    CourseSerializer, SyllabusSerializer, SubjectSerializer, ChapterSerializer, TopicSerializer,TaskSerializer,AddVideoItemSerializer,TaskItemSerializer
+    CourseSerializer, SyllabusSerializer, SubjectSerializer, ChapterSerializer, TopicSerializer,TaskSerializer,AddVideoItemSerializer,TaskItemSerializer,AddQuizItemSerializer
 )
-from .models import User, UserProfile, Plan, Subscription, Course, Syllabus, Subject, Chapter, Topic,Task,TaskItem,TaskVideo,TaskQuiz,TaskGame,TaskActivity
+from .models import User, UserProfile, Plan, Subscription, Course, Syllabus, Subject, Chapter, Topic,Task,TaskItem,TaskVideo,TaskQuiz,TaskGame,TaskActivity,VideoResult
 from .utils import calculate_subscription_price, create_subscription, validate_profile_limits
 from django.utils import timezone
 import threading
@@ -954,6 +954,7 @@ class AdminTaskDetailView(APIView):
         task.is_active = False
         task.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
 class AdminAddVideoItemView(APIView):
     """Admin: Add video item to task"""
     permission_classes = [IsAuthenticated]
@@ -972,36 +973,47 @@ class AdminAddVideoItemView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         # Check video exists and is approved
-        from api.models import VideoResult
-        try:
-            video = VideoResult.objects.get(pk=serializer.validated_data['video_id'], approval_status='APPROVED')
-        except VideoResult.DoesNotExist:
-            return Response({"error": "Approved video not found"}, status=status.HTTP_404_NOT_FOUND)
+        # Task, TaskItem, TaskVideo are already imported at top level
+        # VideoResult is also imported at top level
         
-        # Create task item
-        task_item = TaskItem.objects.create(
-            task=task,
-            item_type='VIDEO',
-            title=serializer.validated_data['title'],
-            description=serializer.validated_data.get('description', ''),
-            order=serializer.validated_data.get('order', 0)
-        )
+        if serializer.is_valid():
+            try:
+                task = Task.objects.get(pk=task_id)
+                video = VideoResult.objects.get(
+                    pk=serializer.validated_data['video_id'],
+                    approval_status='APPROVED'
+                )
+                
+                # Create TaskItem
+                task_item = TaskItem.objects.create(
+                    task=task,
+                    item_type='VIDEO',
+                    title=serializer.validated_data['title'],
+                    day_number=serializer.validated_data['day_number'],
+                    order=serializer.validated_data.get('order', 0)
+                )
+                
+                # Create TaskVideo
+                task_video = TaskVideo.objects.create(
+                    task_item=task_item,
+                    video=video
+                )
+                
+                return Response(
+                    TaskItemSerializer(task_item).data,
+                    status=status.HTTP_201_CREATED
+                )
+            except Task.DoesNotExist:
+                return Response({"error": "Task not found"}, status=status.HTTP_404_NOT_FOUND)
+            except VideoResult.DoesNotExist:
+                return Response({"error": "Approved video not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        # Create video data
-        TaskVideo.objects.create(
-            task_item=task_item,
-            video=video
-        )
-        
-        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
 class AdminAddQuizItemView(APIView):
     """Admin: Add quiz item to task"""
     permission_classes = [IsAuthenticated]
     
     def post(self, request, task_id):
-        # if not request.user.is_staff:
-        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
-        
         try:
             task = Task.objects.get(pk=task_id, is_active=True)
         except Task.DoesNotExist:
@@ -1016,19 +1028,241 @@ class AdminAddQuizItemView(APIView):
             task=task,
             item_type='QUIZ',
             title=serializer.validated_data['title'],
-            description=serializer.validated_data.get('description', ''),
+            day_number=serializer.validated_data['day_number'],
             order=serializer.validated_data.get('order', 0)
         )
         
         # Create quiz data
         TaskQuiz.objects.create(
             task_item=task_item,
+            quiz_type=serializer.validated_data.get('quiz_type', 'QUESTION_OPTIONS'),
             questions=serializer.validated_data['questions'],
             passing_score=serializer.validated_data.get('passing_score', 60),
-            time_limit=serializer.validated_data.get('time_limit')
+            time_limit=serializer.validated_data.get('time_limit'),
+            shuffle_questions=serializer.validated_data.get('shuffle_questions', True)
         )
         
         return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
+
+class AdminEditQuizItemView(APIView):
+    """Admin: Edit existing quiz item"""
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, task_item_id):
+        """Update quiz item and quiz data"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='QUIZ', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Quiz item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddQuizItemSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update TaskItem fields
+        if 'title' in serializer.validated_data:
+            task_item.title = serializer.validated_data['title']
+        if 'description' in serializer.validated_data:
+            task_item.description = serializer.validated_data['description']
+        if 'day_number' in serializer.validated_data:
+            task_item.day_number = serializer.validated_data['day_number']
+        if 'order' in serializer.validated_data:
+            task_item.order = serializer.validated_data['order']
+        task_item.save()
+        
+        # Update TaskQuiz fields
+        try:
+            quiz = task_item.quiz_data
+            if 'quiz_type' in serializer.validated_data:
+                quiz.quiz_type = serializer.validated_data['quiz_type']
+            if 'questions' in serializer.validated_data:
+                quiz.questions = serializer.validated_data['questions']
+            if 'passing_score' in serializer.validated_data:
+                quiz.passing_score = serializer.validated_data['passing_score']
+            if 'time_limit' in serializer.validated_data:
+                quiz.time_limit = serializer.validated_data['time_limit']
+            if 'shuffle_questions' in serializer.validated_data:
+                quiz.shuffle_questions = serializer.validated_data['shuffle_questions']
+            quiz.save()
+        except TaskQuiz.DoesNotExist:
+            return Response({"error": "Quiz data not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_200_OK)
+    
+    def delete(self, request, task_item_id):
+        """Delete quiz item (soft delete)"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='QUIZ', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Quiz item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Soft delete
+        task_item.is_active = False
+        task_item.save()
+        
+        return Response({"message": "Quiz item deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+class AdminEditVideoItemView(APIView):
+    """Admin: Edit existing video item"""
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, task_item_id):
+        """Update video item"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='VIDEO', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Video item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddVideoItemSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update TaskItem fields
+        if 'title' in serializer.validated_data:
+            task_item.title = serializer.validated_data['title']
+        if 'day_number' in serializer.validated_data:
+            task_item.day_number = serializer.validated_data['day_number']
+        if 'order' in serializer.validated_data:
+            task_item.order = serializer.validated_data['order']
+        task_item.save()
+        
+        # Update TaskVideo if video_id is provided
+        if 'video_id' in serializer.validated_data:
+            try:
+                video = VideoResult.objects.get(
+                    pk=serializer.validated_data['video_id'],
+                    approval_status='APPROVED'
+                )
+                task_video = task_item.video_data
+                task_video.video = video
+                task_video.save()
+            except VideoResult.DoesNotExist:
+                return Response({"error": "Approved video not found"}, status=status.HTTP_404_NOT_FOUND)
+            except TaskVideo.DoesNotExist:
+                return Response({"error": "Video data not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_200_OK)
+    
+    def delete(self, request, task_item_id):
+        """Delete video item (soft delete)"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='VIDEO', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Video item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        task_item.is_active = False
+        task_item.save()
+        
+        return Response({"message": "Video item deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminEditGameItemView(APIView):
+    """Admin: Edit existing game item"""
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, task_item_id):
+        """Update game item"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='GAME', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Game item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddGameItemSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update TaskItem fields
+        if 'title' in serializer.validated_data:
+            task_item.title = serializer.validated_data['title']
+        if 'day_number' in serializer.validated_data:
+            task_item.day_number = serializer.validated_data['day_number']
+        if 'order' in serializer.validated_data:
+            task_item.order = serializer.validated_data['order']
+        task_item.save()
+        
+        # Update TaskGame fields
+        try:
+            game = task_item.game_data
+            if 'game_url' in serializer.validated_data:
+                game.game_url = serializer.validated_data['game_url']
+            if 'difficulty' in serializer.validated_data:
+                game.difficulty = serializer.validated_data['difficulty']
+            if 'instructions' in serializer.validated_data:
+                game.instructions = serializer.validated_data['instructions']
+            game.save()
+        except TaskGame.DoesNotExist:
+            return Response({"error": "Game data not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_200_OK)
+    
+    def delete(self, request, task_item_id):
+        """Delete game item (soft delete)"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='GAME', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Game item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        task_item.is_active = False
+        task_item.save()
+        
+        return Response({"message": "Game item deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminEditActivityItemView(APIView):
+    """Admin: Edit existing activity item"""
+    permission_classes = [IsAuthenticated]
+    
+    def put(self, request, task_item_id):
+        """Update activity item"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='ACTIVITY', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Activity item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = AddActivityItemSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update TaskItem fields
+        if 'title' in serializer.validated_data:
+            task_item.title = serializer.validated_data['title']
+        if 'day_number' in serializer.validated_data:
+            task_item.day_number = serializer.validated_data['day_number']
+        if 'order' in serializer.validated_data:
+            task_item.order = serializer.validated_data['order']
+        task_item.save()
+        
+        # Update TaskActivity fields
+        try:
+            activity = task_item.activity_data
+            if 'instructions' in serializer.validated_data:
+                activity.instructions = serializer.validated_data['instructions']
+            if 'materials_needed' in serializer.validated_data:
+                activity.materials_needed = serializer.validated_data['materials_needed']
+            if 'estimated_time' in serializer.validated_data:
+                activity.estimated_time = serializer.validated_data['estimated_time']
+            activity.save()
+        except TaskActivity.DoesNotExist:
+            return Response({"error": "Activity data not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        return Response(TaskItemSerializer(task_item).data, status=status.HTTP_200_OK)
+    
+    def delete(self, request, task_item_id):
+        """Delete activity item (soft delete)"""
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='ACTIVITY', is_active=True)
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Activity item not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        task_item.is_active = False
+        task_item.save()
+        
+        return Response({"message": "Activity item deleted successfully"}, status=status.HTTP_204_NO_CONTENT)
+
+
+
 class AdminAddGameItemView(APIView):
     """Admin: Add game item to task"""
     permission_classes = [IsAuthenticated]
@@ -1051,7 +1285,7 @@ class AdminAddGameItemView(APIView):
             task=task,
             item_type='GAME',
             title=serializer.validated_data['title'],
-            description=serializer.validated_data.get('description', ''),
+            day_number=serializer.validated_data['day_number'],
             order=serializer.validated_data.get('order', 0)
         )
         
@@ -1059,8 +1293,7 @@ class AdminAddGameItemView(APIView):
         TaskGame.objects.create(
             task_item=task_item,
             game_url=serializer.validated_data['game_url'],
-            difficulty=serializer.validated_data.get('difficulty', 'EASY'),
-            instructions=serializer.validated_data.get('instructions', '')
+            difficulty=serializer.validated_data.get('difficulty', 'EASY')
         )
         
         return Response(TaskItemSerializer(task_item).data, status=status.HTTP_201_CREATED)
@@ -1069,9 +1302,6 @@ class AdminAddActivityItemView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, task_id):
-        # if not request.user.is_staff:
-        #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
-        
         try:
             task = Task.objects.get(pk=task_id, is_active=True)
         except Task.DoesNotExist:
@@ -1086,7 +1316,7 @@ class AdminAddActivityItemView(APIView):
             task=task,
             item_type='ACTIVITY',
             title=serializer.validated_data['title'],
-            description=serializer.validated_data.get('description', ''),
+            day_number=serializer.validated_data['day_number'],
             order=serializer.validated_data.get('order', 0)
         )
         
@@ -1107,8 +1337,8 @@ class AdminApprovedVideosListView(APIView):
         # if not request.user.is_staff:
         #     return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
         
-        from api.models import VideoResult
-        from api.serializers import VideoResultSerializer
+        # VideoResult already imported at top level
+        from .serializers import VideoResultSerializer
         
         videos = VideoResult.objects.filter(approval_status='APPROVED')
         
@@ -1125,3 +1355,298 @@ class AdminApprovedVideosListView(APIView):
         videos = videos.order_by('-id')[:50]  # Limit to 50
         serializer = VideoResultSerializer(videos, many=True)
         return Response(serializer.data)
+
+
+# ==================== QUIZ ANSWER SUBMISSION ====================
+
+class SubmitQuizAnswerView(APIView):
+    """
+    Submit and check quiz answers
+    POST /api/auth/submit-quiz-answer/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        from .serializers import QuizAnswerSerializer
+        
+        serializer = QuizAnswerSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        task_item_id = serializer.validated_data['task_item_id']
+        user_answers = serializer.validated_data['user_answers']
+        time_taken = serializer.validated_data.get('time_taken')
+        
+        # Get quiz
+        try:
+            task_item = TaskItem.objects.get(pk=task_item_id, item_type='QUIZ', is_active=True)
+            quiz = task_item.quiz_data
+        except TaskItem.DoesNotExist:
+            return Response({"error": "Quiz not found"}, status=status.HTTP_404_NOT_FOUND)
+        except TaskQuiz.DoesNotExist:
+            return Response({"error": "Quiz data not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Validate based on quiz type
+        if quiz.quiz_type == 'MATCH_MAKING':
+            result = self.validate_match_making(quiz, user_answers)
+        else:  # QUESTION_OPTIONS
+            result = self.validate_question_options(quiz, user_answers)
+        
+        # Add time_taken to result
+        if time_taken:
+            result['time_taken'] = time_taken
+        
+        return Response(result)
+    
+    def validate_question_options(self, quiz, user_answers):
+        """Validate question-options quiz answers"""
+        questions = quiz.questions
+        total_questions = len(questions)
+        correct_count = 0
+        
+        detailed_feedback = []
+        
+        # user_answers format: [{"question_id": 1, "selected_answer": "b"}, ...]
+        user_answers_dict = {ans.get('question_id'): ans.get('selected_answer') for ans in user_answers}
+        
+        for q in questions:
+            question_id = q.get('id')
+            correct_answer = q.get('correct_answer')
+            user_answer = user_answers_dict.get(question_id)
+            
+            is_correct = user_answer == correct_answer
+            if is_correct:
+                correct_count += 1
+            
+            # Find selected option text
+            selected_option = next((opt for opt in q.get('options', []) if opt.get('id') == user_answer), None)
+            correct_option = next((opt for opt in q.get('options', []) if opt.get('id') == correct_answer), None)
+            
+            detailed_feedback.append({
+                'question_id': question_id,
+                'question': q.get('question'),
+                'user_answer': selected_option.get('text') if selected_option else None,
+                'correct_answer': correct_option.get('text') if correct_option else None,
+                'is_correct': is_correct,
+                'explanation': q.get('explanation')
+            })
+        
+        # Calculate percentage
+        percentage = (correct_count / total_questions * 100) if total_questions > 0 else 0
+        passed = percentage >= quiz.passing_score
+        
+        return {
+            'passed': passed,
+            'score': round(percentage, 2),
+            'correct_count': correct_count,
+            'total_count': total_questions,
+            'passing_score': quiz.passing_score,
+            'detailed_feedback': detailed_feedback,
+            'message': f"You got {correct_count} out of {total_questions} correct! {'Well done!' if passed else 'Keep practicing!'}"
+        }
+    
+    def validate_match_making(self, quiz, user_matches):
+        """Validate match-making quiz answers"""
+        question = quiz.questions[0]  # Match-making typically has one question with multiple pairs
+        correct_matches = question.get('correct_matches', [])
+        pairs = question.get('pairs', [])
+        
+        # Convert to dict for easy comparison
+        # user_matches format: [{"left_id": "l1", "right_id": "r2"}, ...]
+        correct_dict = {cm['left_id']: cm['right_id'] for cm in correct_matches}
+        user_dict = {um['left_id']: um['right_id'] for um in user_matches}
+        
+        # Count correct matches
+        total_pairs = len(correct_matches)
+        correct_count = 0
+        
+        detailed_feedback = []
+        
+        for pair in pairs:
+            left_id = pair['left']['id']
+            correct_right_id = correct_dict.get(left_id)
+            user_right_id = user_dict.get(left_id)
+            is_correct = user_right_id == correct_right_id
+            
+            if is_correct:
+                correct_count += 1
+            
+            # Get text for feedback
+            correct_right = next((p['right'] for p in pairs if p['right']['id'] == correct_right_id), None)
+            user_right = next((p['right'] for p in pairs if p['right']['id'] == user_right_id), None) if user_right_id else None
+            
+            detailed_feedback.append({
+                'left': pair['left'].get('text') or f"Item {left_id}",
+                'user_answer': user_right.get('text') if user_right else 'Not matched',
+                'correct_answer': correct_right.get('text') if correct_right else 'Unknown',
+                'is_correct': is_correct
+            })
+        
+        # Calculate percentage
+        percentage = (correct_count / total_pairs * 100) if total_pairs > 0 else 0
+        passed = percentage >= quiz.passing_score
+        
+        return {
+            'passed': passed,
+            'score': round(percentage, 2),
+            'correct_count': correct_count,
+            'total_count': total_pairs,
+            'passing_score': quiz.passing_score,
+            'detailed_feedback': detailed_feedback,
+            'message': f"You matched {correct_count} out of {total_pairs} correctly! {'Excellent!' if passed else 'Try again!'}"
+        }
+
+
+# ==================== VIDEO MANAGEMENT VIEWS ====================
+
+class VideoListView(APIView):
+    """
+    List all videos with optional filtering
+    GET /api/auth/videos/?approval_status=PENDING&topic=1
+    """
+    def get(self, request):
+        from .serializers import VideoResultSerializer
+        
+        # Get all videos
+        videos = VideoResult.objects.all()
+        
+        # Filter by approval_status if provided
+        approval_status = request.query_params.get('approval_status')
+        if approval_status:
+            videos = videos.filter(approval_status=approval_status)
+        
+        # Filter by topic if provided
+        topic_id = request.query_params.get('topic')
+        if topic_id:
+            videos = videos.filter(topic_id=topic_id)
+        
+        # Filter by tag if provided  
+        tag_id = request.query_params.get('tag')
+        if tag_id:
+            videos = videos.filter(tag_id=tag_id)
+        
+        # Order by created date (newest first)
+        videos = videos.order_by('-created_at')
+        
+        serializer = VideoResultSerializer(videos, many=True)
+        return Response(serializer.data)
+
+
+class VideoDetailView(APIView):
+    """
+    GET: View single video details
+    PUT: Update video (approval_status, topic)
+    DELETE: Delete video
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, pk):
+        """Helper method to get video by ID"""
+        try:
+            return VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return None
+    
+    def get(self, request, pk):
+        """Get video details"""
+        from .serializers import VideoResultSerializer
+        
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = VideoResultSerializer(video)
+        return Response(serializer.data)
+    
+    def put(self, request, pk):
+        """Update video (approval_status, topic)"""
+        from .serializers import VideoResultSerializer
+        
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = VideoResultSerializer(video, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        """Delete video"""
+        video = self.get_object(pk)
+        if not video:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        video.delete()
+        return Response(
+            {"message": "Video deleted successfully"}, 
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+
+class VideoApproveView(APIView):
+    """
+    Quick approve a video
+    POST /api/auth/videos/{id}/approve/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        from .serializers import VideoResultSerializer
+        
+        try:
+            video = VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update approval status
+        video.approval_status = 'APPROVED'
+        video.save()
+        
+        serializer = VideoResultSerializer(video)
+        return Response({
+            "message": "Video approved successfully",
+            "video": serializer.data
+        })
+
+
+class VideoDisapproveView(APIView):
+    """
+    Quick disapprove a video
+    POST /api/auth/videos/{id}/disapprove/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, pk):
+        from .serializers import VideoResultSerializer
+        
+        try:
+            video = VideoResult.objects.get(pk=pk)
+        except VideoResult.DoesNotExist:
+            return Response(
+                {"error": "Video not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Update approval status
+        video.approval_status = 'DISAPPROVED'
+        video.save()
+        
+        serializer = VideoResultSerializer(video)
+        return Response({
+            "message": "Video disapproved successfully",
+            "video": serializer.data
+        })
