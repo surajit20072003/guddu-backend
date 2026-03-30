@@ -162,4 +162,5 @@ CELERY_TIMEZONE = 'Asia/Kolkata'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173", # Your frontend
+    "http://localhost:3000", # Next.js/React frontend
 ]

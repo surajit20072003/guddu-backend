@@ -90,7 +90,7 @@ class LoginView(APIView):
         user = None
         if email:
             try:
-                user = User.objects.get(email=email.lower())
+                user = User.objects.get(email__iexact=email)
             except User.DoesNotExist:
                 pass
         
