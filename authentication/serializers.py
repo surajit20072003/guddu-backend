@@ -248,35 +248,60 @@ class CourseSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Course
-        fields = ['id', 'title', 'description', 'grade', 'grade_display', 
-                  'thumbnail', 'is_active', 'created_at', 'updated_at']
+        fields = [
+            'id', 'title', 'slug', 'description', 'board',
+            'grade', 'grade_display',
+            'thumbnail',
+            'status', 'is_active',
+            'created_at', 'updated_at',
+        ]
 
 
 class SyllabusSerializer(serializers.ModelSerializer):
-    course_title = serializers.CharField(source='course.title', read_only=True)
+    subject_title = serializers.CharField(source='subject.name', read_only=True)
+    course_title = serializers.CharField(source='subject.course.title', read_only=True)
     
     class Meta:
         model = Syllabus
-        fields = ['id', 'course', 'course_title', 'title', 'description', 
-                  'academic_year', 'is_active', 'created_at', 'updated_at']
+        fields = [
+            'id', 'subject', 'subject_title', 'course_title',
+            'slug',
+            'title', 'description',
+            'academic_year',
+            'status', 'is_active',
+            'created_at', 'updated_at',
+        ]
 
 
 class SubjectSerializer(serializers.ModelSerializer):
-    syllabus_title = serializers.CharField(source='syllabus.title', read_only=True)
+    course_title = serializers.CharField(source='course.title', read_only=True)
     
     class Meta:
         model = Subject
-        fields = ['id', 'syllabus', 'syllabus_title', 'name', 'description', 
-                  'order', 'icon', 'is_active', 'created_at', 'updated_at']
+        fields = [
+            'id', 'course', 'course_title',
+            'slug',
+            'name', 'description',
+            'order', 'icon',
+            'status', 'is_active',
+            'created_at', 'updated_at',
+        ]
 
 
 class ChapterSerializer(serializers.ModelSerializer):
-    subject_name = serializers.CharField(source='subject.name', read_only=True)
+    subject_name = serializers.CharField(source='syllabus.subject.name', read_only=True)
+    syllabus_title = serializers.CharField(source='syllabus.title', read_only=True)
     
     class Meta:
         model = Chapter
-        fields = ['id', 'subject', 'subject_name', 'title', 'description', 
-                  'chapter_number', 'is_active', 'created_at', 'updated_at']
+        fields = [
+            'id', 'syllabus', 'syllabus_title', 'subject_name',
+            'slug',
+            'title', 'description',
+            'chapter_number',
+            'status', 'is_active',
+            'created_at', 'updated_at',
+        ]
 
 
 class TopicSerializer(serializers.ModelSerializer):
@@ -284,10 +309,55 @@ class TopicSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Topic
-        fields = ['id', 'chapter', 'chapter_title', 'title', 'description', 
-                  'order', 'search_status', 'last_searched_at', 'is_active', 
-                  'created_at', 'updated_at']
+        fields = [
+            'id', 'chapter', 'chapter_title',
+            'slug',
+            'title', 'description',
+            'video_url', 'notes', 'attachments',
+            'order',
+            'search_status', 'last_searched_at',
+            'status', 'is_active',
+            'created_at', 'updated_at',
+        ]
         read_only_fields = ['search_status', 'last_searched_at']
+
+
+class TopicTreeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Topic
+        fields = ['id', 'title', 'slug', 'description', 'order', 'video_url', 'notes', 'attachments']
+
+
+class ChapterTreeSerializer(serializers.ModelSerializer):
+    topics = TopicTreeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Chapter
+        fields = ['id', 'title', 'slug', 'description', 'chapter_number', 'topics']
+
+
+class SyllabusTreeSerializer(serializers.ModelSerializer):
+    chapters = ChapterTreeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Syllabus
+        fields = ['id', 'title', 'slug', 'description', 'academic_year', 'chapters']
+
+
+class SubjectTreeSerializer(serializers.ModelSerializer):
+    syllabi = SyllabusTreeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Subject
+        fields = ['id', 'name', 'slug', 'description', 'order', 'syllabi']
+
+
+class CourseFullTreeSerializer(serializers.ModelSerializer):
+    subjects = SubjectTreeSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Course
+        fields = ['id', 'title', 'slug', 'description', 'board', 'grade', 'subjects']
 
 
 

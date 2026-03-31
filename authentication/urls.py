@@ -35,6 +35,7 @@ urlpatterns = [
     # Syllabus endpoints (Admin)
     path('admin/syllabi/', SyllabusListCreateView.as_view(), name='syllabus-list-create'),
     path('admin/syllabi/<int:pk>/', SyllabusDetailView.as_view(), name='syllabus-detail'),
+    path('admin/syllabi/import/', SyllabusImportView.as_view(), name='syllabus-import'),
     
     # Subject endpoints (Admin)
     path('admin/subjects/', SubjectListCreateView.as_view(), name='subject-list-create'),
@@ -47,6 +48,15 @@ urlpatterns = [
     # Topic endpoints (Admin)
     path('admin/topics/', TopicListCreateView.as_view(), name='topic-list-create'),
     path('admin/topics/<int:pk>/', TopicDetailView.as_view(), name='topic-detail'),
+
+    # ==================== CONTENT CONSUMPTION ENDPOINTS (NON-ADMIN) ====================
+    path('courses/', PublicCourseListView.as_view(), name='public-course-list'),
+    path('courses/<int:course_id>/subjects/', PublicSubjectListByCourseView.as_view(), name='public-subject-list-by-course'),
+    path('subjects/<int:subject_id>/syllabi/', PublicSyllabusListBySubjectView.as_view(), name='public-syllabus-list-by-subject'),
+    path('syllabi/<int:syllabus_id>/chapters/', PublicChapterListBySyllabusView.as_view(), name='public-chapter-list-by-syllabus'),
+    path('chapters/<int:chapter_id>/topics/', PublicTopicListByChapterView.as_view(), name='public-topic-list-by-chapter'),
+    path('courses/<int:course_id>/full-tree/', CourseFullTreeView.as_view(), name='course-full-tree'),
+    path('courses/<slug:slug>/full-tree/', CourseFullTreeBySlugView.as_view(), name='course-full-tree-by-slug'),
 
     # Admin topic processing
     path('admin/process-topics/', AdminProcessTopicBatchView.as_view(), name='admin-process-topics'),

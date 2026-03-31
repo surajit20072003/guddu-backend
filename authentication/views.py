@@ -8,15 +8,25 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
+from django.db.models import Prefetch
 
 from .serializers import (
     UserRegistrationSerializer, UserProfileSerializer,
     PlanSerializer, SubscriptionSerializer, SubscriptionCreateSerializer,
     SubscriptionPriceSerializer,
-    CourseSerializer, SyllabusSerializer, SubjectSerializer, ChapterSerializer, TopicSerializer,TaskSerializer,AddVideoItemSerializer,TaskItemSerializer,AddQuizItemSerializer
+    CourseSerializer, SyllabusSerializer, SubjectSerializer, ChapterSerializer, TopicSerializer,
+    CourseFullTreeSerializer,
+    TaskSerializer, AddVideoItemSerializer, TaskItemSerializer, AddQuizItemSerializer
 )
 from .models import User, UserProfile, Plan, Subscription, Course, Syllabus, Subject, Chapter, Topic,Task,TaskItem,TaskVideo,TaskQuiz,TaskGame,TaskActivity,VideoResult
 from .utils import calculate_subscription_price, create_subscription, validate_profile_limits
+from .services.file_parser import extract_text_from_uploaded_file, parse_syllabus_text
+from .services.syllabus_service import (
+    create_chapter,
+    create_syllabus,
+    create_topic,
+    import_syllabus_structure,
+)
 from django.utils import timezone
 import threading
 
@@ -444,7 +454,7 @@ class CourseListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        courses = Course.objects.filter(is_active=True)
+        courses = Course.objects.filter(is_active=True).order_by('grade', 'title')
         serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data)
     
@@ -531,7 +541,18 @@ class SyllabusListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        syllabi = Syllabus.objects.filter(is_active=True)
+        syllabi = Syllabus.objects.filter(
+            is_active=True,
+            subject__is_active=True,
+            subject__course__is_active=True,
+        ).order_by('-academic_year', 'title')
+        subject_id = request.query_params.get('subject_id')
+        if subject_id:
+            try:
+                subject_id = int(subject_id)
+            except ValueError:
+                return Response({"error": "subject_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+            syllabi = syllabi.filter(subject_id=subject_id)
         serializer = SyllabusSerializer(syllabi, many=True)
         return Response(serializer.data)
     
@@ -541,12 +562,17 @@ class SyllabusListCreateView(APIView):
                 {"error": "Admin access required"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         serializer = SyllabusSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            syllabus = create_syllabus(**serializer.validated_data)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(SyllabusSerializer(syllabus).data, status=status.HTTP_201_CREATED)
 
 
 class SyllabusDetailView(APIView):
@@ -607,13 +633,85 @@ class SyllabusDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class SyllabusImportView(APIView):
+    """
+    POST /api/auth/admin/syllabi/import/
+    Import a PDF/DOC/DOCX syllabus and create syllabus -> chapters -> topics.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response({"error": "Admin access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        uploaded_file = request.FILES.get("file")
+        subject_id = request.data.get("subject_id")
+        title = (request.data.get("title") or "").strip()
+        academic_year = (request.data.get("academic_year") or "").strip()
+        description = (request.data.get("description") or "").strip()
+        status_value = (request.data.get("status") or "DRAFT").strip().upper()
+        is_active = str(request.data.get("is_active", "true")).lower() in {"true", "1", "yes"}
+
+        if not subject_id:
+            return Response({"error": "subject_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            subject_id = int(subject_id)
+        except ValueError:
+            return Response({"error": "subject_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not uploaded_file:
+            return Response({"error": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            extracted_text = extract_text_from_uploaded_file(uploaded_file)
+            parsed_chapters = parse_syllabus_text(extracted_text)
+
+            if not title:
+                title = getattr(uploaded_file, "name", "Imported Syllabus").rsplit(".", 1)[0]
+
+            result = import_syllabus_structure(
+                subject_id=subject_id,
+                title=title,
+                academic_year=academic_year,
+                description=description,
+                status=status_value,
+                is_active=is_active,
+                chapters_payload=parsed_chapters,
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"error": f"Import failed: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        syllabus = result["syllabus"]
+        return Response(
+            {
+                "message": "Syllabus imported successfully",
+                "syllabus_id": syllabus.id,
+                "chapters_created": result["chapters_created"],
+                "topics_created": result["topics_created"],
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 # ==================== SUBJECT VIEWS ====================
 
 class SubjectListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        subjects = Subject.objects.filter(is_active=True)
+        subjects = Subject.objects.filter(
+            is_active=True,
+            course__is_active=True,
+        ).order_by('order', 'name')
+        course_id = request.query_params.get('course_id')
+        if course_id:
+            try:
+                course_id = int(course_id)
+            except ValueError:
+                return Response({"error": "course_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+            subjects = subjects.filter(course_id=course_id)
         serializer = SubjectSerializer(subjects, many=True)
         return Response(serializer.data)
     
@@ -695,7 +793,19 @@ class ChapterListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        chapters = Chapter.objects.filter(is_active=True)
+        chapters = Chapter.objects.filter(
+            is_active=True,
+            syllabus__is_active=True,
+            syllabus__subject__is_active=True,
+            syllabus__subject__course__is_active=True,
+        ).order_by('chapter_number')
+        syllabus_id = request.query_params.get('syllabus_id')
+        if syllabus_id:
+            try:
+                syllabus_id = int(syllabus_id)
+            except ValueError:
+                return Response({"error": "syllabus_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+            chapters = chapters.filter(syllabus_id=syllabus_id)
         serializer = ChapterSerializer(chapters, many=True)
         return Response(serializer.data)
     
@@ -705,12 +815,17 @@ class ChapterListCreateView(APIView):
                 {"error": "Admin access required"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         serializer = ChapterSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            chapter = create_chapter(**serializer.validated_data)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(ChapterSerializer(chapter).data, status=status.HTTP_201_CREATED)
 
 
 class ChapterDetailView(APIView):
@@ -777,7 +892,20 @@ class TopicListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        topics = Topic.objects.filter(is_active=True)
+        topics = Topic.objects.filter(
+            is_active=True,
+            chapter__is_active=True,
+            chapter__syllabus__is_active=True,
+            chapter__syllabus__subject__is_active=True,
+            chapter__syllabus__subject__course__is_active=True,
+        ).order_by('order')
+        chapter_id = request.query_params.get('chapter_id')
+        if chapter_id:
+            try:
+                chapter_id = int(chapter_id)
+            except ValueError:
+                return Response({"error": "chapter_id must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+            topics = topics.filter(chapter_id=chapter_id)
         serializer = TopicSerializer(topics, many=True)
         return Response(serializer.data)
     
@@ -787,12 +915,17 @@ class TopicListCreateView(APIView):
                 {"error": "Admin access required"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         serializer = TopicSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            topic = create_topic(**serializer.validated_data)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(TopicSerializer(topic).data, status=status.HTTP_201_CREATED)
 
 
 class TopicDetailView(APIView):
@@ -851,6 +984,217 @@ class TopicDetailView(APIView):
         topic.is_active = False
         topic.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ==================== CONTENT CONSUMPTION VIEWS (NON-ADMIN) ====================
+
+class PublicCourseListView(APIView):
+    """Public read-only: list active published courses."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        courses = Course.objects.filter(
+            is_active=True,
+            status='PUBLISHED',
+        ).order_by('grade', 'title')
+        serializer = CourseSerializer(courses, many=True)
+        return Response(serializer.data)
+
+
+class PublicSubjectListByCourseView(APIView):
+    """Public read-only: list active published subjects for a course."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, course_id):
+        subjects = Subject.objects.filter(
+            course_id=course_id,
+            is_active=True,
+            status='PUBLISHED',
+            course__is_active=True,
+            course__status='PUBLISHED',
+        ).order_by('order', 'name')
+        serializer = SubjectSerializer(subjects, many=True)
+        return Response(serializer.data)
+
+
+class PublicSyllabusListBySubjectView(APIView):
+    """Public read-only: list active published syllabi for a subject."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, subject_id):
+        syllabi = Syllabus.objects.filter(
+            subject_id=subject_id,
+            is_active=True,
+            status='PUBLISHED',
+            subject__is_active=True,
+            subject__status='PUBLISHED',
+            subject__course__is_active=True,
+            subject__course__status='PUBLISHED',
+        ).order_by('-academic_year', 'title')
+        serializer = SyllabusSerializer(syllabi, many=True)
+        return Response(serializer.data)
+
+
+class PublicChapterListBySyllabusView(APIView):
+    """Public read-only: list active published chapters for a syllabus."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, syllabus_id):
+        chapters = Chapter.objects.filter(
+            syllabus_id=syllabus_id,
+            is_active=True,
+            status='PUBLISHED',
+            syllabus__is_active=True,
+            syllabus__status='PUBLISHED',
+            syllabus__subject__is_active=True,
+            syllabus__subject__status='PUBLISHED',
+            syllabus__subject__course__is_active=True,
+            syllabus__subject__course__status='PUBLISHED',
+        ).order_by('chapter_number')
+        serializer = ChapterSerializer(chapters, many=True)
+        return Response(serializer.data)
+
+
+class PublicTopicListByChapterView(APIView):
+    """Public read-only: list active published topics for a chapter."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, chapter_id):
+        topics = Topic.objects.filter(
+            chapter_id=chapter_id,
+            is_active=True,
+            status='PUBLISHED',
+            chapter__is_active=True,
+            chapter__status='PUBLISHED',
+            chapter__syllabus__is_active=True,
+            chapter__syllabus__status='PUBLISHED',
+            chapter__syllabus__subject__is_active=True,
+            chapter__syllabus__subject__status='PUBLISHED',
+            chapter__syllabus__subject__course__is_active=True,
+            chapter__syllabus__subject__course__status='PUBLISHED',
+        ).order_by('order')
+        serializer = TopicSerializer(topics, many=True)
+        return Response(serializer.data)
+
+
+class CourseFullTreeView(APIView):
+    """Public read-only: return complete nested content tree for a course."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, course_id):
+        course = (
+            Course.objects.filter(
+                id=course_id,
+                is_active=True,
+                status='PUBLISHED',
+            )
+            .prefetch_related(
+                Prefetch(
+                    'subjects',
+                    queryset=Subject.objects.filter(
+                        is_active=True,
+                        status='PUBLISHED',
+                    )
+                    .order_by('order', 'name')
+                    .prefetch_related(
+                        Prefetch(
+                            'syllabi',
+                            queryset=Syllabus.objects.filter(
+                                is_active=True,
+                                status='PUBLISHED',
+                            )
+                            .order_by('-academic_year', 'title')
+                            .prefetch_related(
+                                Prefetch(
+                                    'chapters',
+                                    queryset=Chapter.objects.filter(
+                                        is_active=True,
+                                        status='PUBLISHED',
+                                    )
+                                    .order_by('chapter_number')
+                                    .prefetch_related(
+                                        Prefetch(
+                                            'topics',
+                                            queryset=Topic.objects.filter(
+                                                is_active=True,
+                                                status='PUBLISHED',
+                                            ).order_by('order')
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            .first()
+        )
+
+        if not course:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CourseFullTreeSerializer(course)
+        return Response(serializer.data)
+
+
+class CourseFullTreeBySlugView(APIView):
+    """Public read-only: return complete nested content tree for a course slug."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        course = (
+            Course.objects.filter(
+                slug=slug,
+                is_active=True,
+                status='PUBLISHED',
+            )
+            .prefetch_related(
+                Prefetch(
+                    'subjects',
+                    queryset=Subject.objects.filter(
+                        is_active=True,
+                        status='PUBLISHED',
+                    )
+                    .order_by('order', 'name')
+                    .prefetch_related(
+                        Prefetch(
+                            'syllabi',
+                            queryset=Syllabus.objects.filter(
+                                is_active=True,
+                                status='PUBLISHED',
+                            )
+                            .order_by('-academic_year', 'title')
+                            .prefetch_related(
+                                Prefetch(
+                                    'chapters',
+                                    queryset=Chapter.objects.filter(
+                                        is_active=True,
+                                        status='PUBLISHED',
+                                    )
+                                    .order_by('chapter_number')
+                                    .prefetch_related(
+                                        Prefetch(
+                                            'topics',
+                                            queryset=Topic.objects.filter(
+                                                is_active=True,
+                                                status='PUBLISHED',
+                                            ).order_by('order')
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+            .first()
+        )
+
+        if not course:
+            return Response({"error": "Course not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CourseFullTreeSerializer(course)
+        return Response(serializer.data)
 
 class AdminProcessTopicBatchView(APIView):
     """

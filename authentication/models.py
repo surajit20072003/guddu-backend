@@ -3,11 +3,25 @@ from django.db import models
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
+from django.utils.text import slugify
 from decimal import Decimal
 from . import enums 
 
 
 from .managers import CustomUserManager
+
+
+def _build_unique_slug(instance, source_value, slug_field_name='slug'):
+    """Generate a unique slug for a model instance."""
+    base_slug = slugify(source_value) or f'{instance.__class__.__name__.lower()}-{instance.pk or "item"}'
+    slug_candidate = base_slug
+    counter = 1
+
+    model_cls = instance.__class__
+    while model_cls.objects.filter(**{slug_field_name: slug_candidate}).exclude(pk=instance.pk).exists():
+        counter += 1
+        slug_candidate = f'{base_slug}-{counter}'
+    return slug_candidate
 
 class User(AbstractUser):
     username = None
@@ -94,7 +108,7 @@ class Plan(models.Model):
     )
     
     # Status
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -244,92 +258,223 @@ class Course(models.Model):
     """
     Main course (e.g., "LKG Mathematics", "UKG English")
     """
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PUBLISHED', 'Published'),
+        ('ARCHIVED', 'Archived'),
+    ]
+
     title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=255, unique=True, db_index=True, blank=True)
     description = models.TextField(blank=True)
+    board = models.CharField(max_length=50, null=True, blank=True, db_index=True)
     grade = models.CharField(
         max_length=10, 
         choices=enums.Grade.choices,
         help_text="Target grade for this course"
     )
     thumbnail = models.ImageField(upload_to='courses/', null=True, blank=True)
-    is_active = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT',
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['grade', 'title']
+        indexes = [
+            models.Index(fields=['grade', 'is_active']),
+            models.Index(fields=['status']),
+        ]
     
     def __str__(self):
         return f"{self.title} ({self.get_grade_display()})"
 
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = _build_unique_slug(self, self.title)
+        super().save(*args, **kwargs)
+        if not self.is_active:
+            # Cascade soft-delete so inactive courses never expose active descendants.
+            Subject.objects.filter(course=self).update(is_active=False)
+            Syllabus.objects.filter(subject__course=self).update(is_active=False)
+            Chapter.objects.filter(syllabus__subject__course=self).update(is_active=False)
+            Topic.objects.filter(chapter__syllabus__subject__course=self).update(is_active=False)
+
 
 class Syllabus(models.Model):
     """
-    Syllabus for a course (e.g., "2024-25 Syllabus")
+    Syllabus version under a subject (e.g., "2024-25 Syllabus")
     """
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='syllabi')
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PUBLISHED', 'Published'),
+        ('ARCHIVED', 'Archived'),
+    ]
+
+    subject = models.ForeignKey('Subject', on_delete=models.CASCADE, related_name='syllabi', db_index=True)
     title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=255, unique=True, db_index=True, blank=True)
     description = models.TextField(blank=True)
     academic_year = models.CharField(max_length=20, blank=True, help_text="e.g., 2024-25")
-    is_active = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT',
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-academic_year']
         verbose_name_plural = "Syllabi"
+        constraints = [
+            models.UniqueConstraint(
+                fields=['subject', 'title', 'academic_year'],
+                name='uniq_syllabus_subject_title_version',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['subject', 'is_active']),
+            models.Index(fields=['academic_year']),
+        ]
     
     def __str__(self):
-        return f"{self.course.title} - {self.title}"
+        return f"{self.subject.course.title} - {self.title} ({self.academic_year})"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            slug_source = f'{self.subject.name}-{self.title}-{self.academic_year}'
+            self.slug = _build_unique_slug(self, slug_source)
+        super().save(*args, **kwargs)
+        if not self.is_active:
+            Chapter.objects.filter(syllabus=self).update(is_active=False)
+            Topic.objects.filter(chapter__syllabus=self).update(is_active=False)
 
 
 class Subject(models.Model):
     """
     Subject (e.g., "Mathematics", "English", "Science")
     """
-    syllabus = models.ForeignKey(Syllabus, on_delete=models.CASCADE, related_name='subjects')
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PUBLISHED', 'Published'),
+        ('ARCHIVED', 'Archived'),
+    ]
+
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='subjects', db_index=True)
     name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=255, unique=True, db_index=True, blank=True)
     description = models.TextField(blank=True)
-    order = models.PositiveIntegerField(default=0, help_text="Display order")
+    order = models.PositiveIntegerField(default=0, help_text="Display order", db_index=True)
     icon = models.CharField(max_length=50, blank=True, help_text="Icon name or emoji")
-    is_active = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT',
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['order', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['course', 'name'],
+                name='uniq_subject_course_name',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['course', 'is_active', 'order']),
+        ]
     
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = _build_unique_slug(self, f'{self.course.title}-{self.name}')
+        super().save(*args, **kwargs)
+        if not self.is_active:
+            Syllabus.objects.filter(subject=self).update(is_active=False)
+            Chapter.objects.filter(syllabus__subject=self).update(is_active=False)
+            Topic.objects.filter(chapter__syllabus__subject=self).update(is_active=False)
 
 
 class Chapter(models.Model):
     """
     Chapter (e.g., "Chapter 1: Numbers")
     """
-    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='chapters')
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PUBLISHED', 'Published'),
+        ('ARCHIVED', 'Archived'),
+    ]
+
+    syllabus = models.ForeignKey(Syllabus, on_delete=models.CASCADE, related_name='chapters', db_index=True)
     title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=255, unique=True, db_index=True, blank=True)
     description = models.TextField(blank=True)
-    chapter_number = models.PositiveIntegerField(help_text="Chapter sequence number")
-    is_active = models.BooleanField(default=True)
+    chapter_number = models.PositiveIntegerField(help_text="Chapter sequence number", db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT',
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['chapter_number']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['syllabus', 'chapter_number'],
+                name='uniq_chapter_syllabus_chapter_number',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['syllabus', 'is_active', 'chapter_number']),
+        ]
     
     def __str__(self):
         return f"Ch {self.chapter_number}: {self.title}"
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = _build_unique_slug(self, f'{self.syllabus.title}-{self.chapter_number}-{self.title}')
+        super().save(*args, **kwargs)
+        if not self.is_active:
+            Topic.objects.filter(chapter=self).update(is_active=False)
 
 
 class Topic(models.Model):
     """
     Topic within a chapter (e.g., "Counting 1-10", "Addition basics")
     """
-    chapter = models.ForeignKey(Chapter, on_delete=models.CASCADE, related_name='topics')
+    chapter = models.ForeignKey(Chapter, on_delete=models.CASCADE, related_name='topics', db_index=True)
     title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=255, unique=True, db_index=True, blank=True)
     description = models.TextField(blank=True)
-    order = models.PositiveIntegerField(default=0, help_text="Display order within chapter")
+    order = models.PositiveIntegerField(default=0, help_text="Display order within chapter", db_index=True)
+    video_url = models.URLField(max_length=500, blank=True)
+    notes = models.TextField(blank=True, help_text="Rich text or markdown notes for this topic")
+    attachments = models.JSONField(default=list, blank=True, help_text="List of attachment metadata/URLs")
+
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PUBLISHED', 'Published'),
+        ('ARCHIVED', 'Archived'),
+    ]
     
     # NEW: Search status tracking
     SEARCH_STATUS_CHOICES = [
@@ -345,15 +490,36 @@ class Topic(models.Model):
     )
     last_searched_at = models.DateTimeField(null=True, blank=True)
     
-    is_active = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='DRAFT',
+        db_index=True,
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['order']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['chapter', 'order'],
+                name='uniq_topic_chapter_order',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['chapter', 'is_active', 'order']),
+            models.Index(fields=['status']),
+        ]
     
     def __str__(self):
         return self.title
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = _build_unique_slug(self, f'{self.chapter.title}-{self.order}-{self.title}')
+        super().save(*args, **kwargs)
 
 
 class VideoResult(models.Model):
@@ -420,8 +586,14 @@ class Task(models.Model):
     @property
     def grade(self):
         """Get grade from topic's course"""
-        if self.topic and self.topic.chapter and self.topic.chapter.subject and self.topic.chapter.subject.syllabus:
-            return self.topic.chapter.subject.syllabus.course.grade
+        if (
+            self.topic
+            and self.topic.chapter
+            and self.topic.chapter.syllabus
+            and self.topic.chapter.syllabus.subject
+            and self.topic.chapter.syllabus.subject.course
+        ):
+            return self.topic.chapter.syllabus.subject.course.grade
         return None
 
 

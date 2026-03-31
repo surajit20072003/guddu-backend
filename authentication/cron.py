@@ -40,9 +40,9 @@ def process_topic_batch():
             # Format: "Topic name Chapter name Subject Grade"
             # Example: "Counting 1-10 Numbers Mathematics LKG"
             chapter = topic.chapter
-            subject = chapter.subject
-            syllabus = subject.syllabus
-            course = syllabus.course
+            syllabus = chapter.syllabus
+            subject = syllabus.subject
+            course = subject.course
             
             search_query = f"{topic.title} {chapter.title} {subject.name} {course.grade}"
             logger.info(f"Searching YouTube for: {search_query}")
