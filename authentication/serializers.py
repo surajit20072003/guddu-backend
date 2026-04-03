@@ -365,6 +365,8 @@ class CourseFullTreeSerializer(serializers.ModelSerializer):
 
 class VideoResultSerializer(serializers.ModelSerializer):
     """Serializer for video results"""
+    context = serializers.SerializerMethodField()
+    
     class Meta:
         model = VideoResult
         fields = [
@@ -372,7 +374,7 @@ class VideoResultSerializer(serializers.ModelSerializer):
             'channel_title', 'published_at', 'duration',
             'view_count', 'like_count', 'comment_count',
             'tags_from_video', 'description', 'approval_status', 
-            'topic', 'created_at', 'updated_at'
+            'topic', 'context', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'video_id', 'title', 'url', 'thumbnail_url',
@@ -380,6 +382,24 @@ class VideoResultSerializer(serializers.ModelSerializer):
             'view_count', 'like_count', 'comment_count',
             'tags_from_video', 'description', 'created_at', 'updated_at'
         ]
+        
+    def get_context(self, obj):
+        if not obj.topic:
+            return None
+        
+        # Safely traverse the nested hierarchy
+        chapter = getattr(obj.topic, 'chapter', None)
+        syllabus = getattr(chapter, 'syllabus', None) if chapter else None
+        subject = getattr(syllabus, 'subject', None) if syllabus else None
+        course = getattr(subject, 'course', None) if subject else None
+        
+        return {
+            'topic_title': obj.topic.title,
+            'chapter_title': chapter.title if chapter else None,
+            'syllabus_title': syllabus.title if syllabus else None,
+            'subject_title': subject.name if subject else None,
+            'course_title': course.title if course else None
+        }
 
 
 # ==================== TASK ITEM SERIALIZERS ====================

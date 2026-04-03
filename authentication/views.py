@@ -454,7 +454,7 @@ class CourseListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        courses = Course.objects.filter(is_active=True).order_by('grade', 'title')
+        courses = Course.objects.all().order_by('grade', 'title')
         serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data)
     
@@ -482,7 +482,7 @@ class CourseDetailView(APIView):
     
     def get_object(self, pk):
         try:
-            return Course.objects.get(pk=pk, is_active=True)
+            return Course.objects.get(pk=pk)
         except Course.DoesNotExist:
             return None
     
@@ -541,12 +541,8 @@ class SyllabusListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        syllabi = Syllabus.objects.filter(
-            is_active=True,
-            subject__is_active=True,
-            subject__course__is_active=True,
-        ).order_by('-academic_year', 'title')
-        subject_id = request.query_params.get('subject_id')
+        syllabi = Syllabus.objects.all().order_by('-academic_year', 'title')
+        subject_id = request.query_params.get('subject_id') or request.query_params.get('subject')
         if subject_id:
             try:
                 subject_id = int(subject_id)
@@ -580,7 +576,7 @@ class SyllabusDetailView(APIView):
     
     def get_object(self, pk):
         try:
-            return Syllabus.objects.get(pk=pk, is_active=True)
+            return Syllabus.objects.get(pk=pk)
         except Syllabus.DoesNotExist:
             return None
     
@@ -701,11 +697,8 @@ class SubjectListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        subjects = Subject.objects.filter(
-            is_active=True,
-            course__is_active=True,
-        ).order_by('order', 'name')
-        course_id = request.query_params.get('course_id')
+        subjects = Subject.objects.all().order_by('order', 'name')
+        course_id = request.query_params.get('course_id') or request.query_params.get('course')
         if course_id:
             try:
                 course_id = int(course_id)
@@ -734,7 +727,7 @@ class SubjectDetailView(APIView):
     
     def get_object(self, pk):
         try:
-            return Subject.objects.get(pk=pk, is_active=True)
+            return Subject.objects.get(pk=pk)
         except Subject.DoesNotExist:
             return None
     
@@ -793,13 +786,8 @@ class ChapterListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        chapters = Chapter.objects.filter(
-            is_active=True,
-            syllabus__is_active=True,
-            syllabus__subject__is_active=True,
-            syllabus__subject__course__is_active=True,
-        ).order_by('chapter_number')
-        syllabus_id = request.query_params.get('syllabus_id')
+        chapters = Chapter.objects.all().order_by('chapter_number')
+        syllabus_id = request.query_params.get('syllabus_id') or request.query_params.get('syllabus')
         if syllabus_id:
             try:
                 syllabus_id = int(syllabus_id)
@@ -833,7 +821,7 @@ class ChapterDetailView(APIView):
     
     def get_object(self, pk):
         try:
-            return Chapter.objects.get(pk=pk, is_active=True)
+            return Chapter.objects.get(pk=pk)
         except Chapter.DoesNotExist:
             return None
     
@@ -892,14 +880,8 @@ class TopicListCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        topics = Topic.objects.filter(
-            is_active=True,
-            chapter__is_active=True,
-            chapter__syllabus__is_active=True,
-            chapter__syllabus__subject__is_active=True,
-            chapter__syllabus__subject__course__is_active=True,
-        ).order_by('order')
-        chapter_id = request.query_params.get('chapter_id')
+        topics = Topic.objects.all().order_by('order')
+        chapter_id = request.query_params.get('chapter_id') or request.query_params.get('chapter')
         if chapter_id:
             try:
                 chapter_id = int(chapter_id)
@@ -933,7 +915,7 @@ class TopicDetailView(APIView):
     
     def get_object(self, pk):
         try:
-            return Topic.objects.get(pk=pk, is_active=True)
+            return Topic.objects.get(pk=pk)
         except Topic.DoesNotExist:
             return None
     
